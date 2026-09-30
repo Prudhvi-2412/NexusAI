@@ -1,0 +1,28 @@
+flowchart TD
+    Start["Agent proposes High-Impact Action\n(e.g., Send Email, Book Meeting, Delete Item)"]
+    PolicyCheck{"Matches Human Approval\nGuardrail Policy?"}
+    
+    AutoExec["Execute immediately via MCP Server"]
+    CreateApproval["Create ApprovalRequest\n(Impact: Low/Medium/High/Critical)\nSave pending state in Postgres/Redis"]
+    NotifyUI["Emit 'approval:required' SSE Event\nto Web Dashboard & Push Notification"]
+    
+    UserDecision{"User Action\non Web Dashboard"}
+    
+    UserApproved["User clicks 'Approve'\n(Optional modified payload)"]
+    UserRejected["User clicks 'Reject'\n(Optional feedback note)"]
+    
+    ResumeApproved["LangGraph State Machine Resumes\nTool execution completed via MCP"]
+    ResumeRejected["LangGraph State Machine Resumes\nAgent informed of rejection reason\nReplans alternative path"]
+    AuditLog["Append to Immutable Audit Trail\n(Run ID, Decided By, Timestamp)"]
+
+    Start --> PolicyCheck
+    PolicyCheck -->|No| AutoExec
+    PolicyCheck -->|Yes| CreateApproval
+    CreateApproval --> NotifyUI
+    NotifyUI --> UserDecision
+    UserDecision -->|Approve| UserApproved
+    UserDecision -->|Reject| UserRejected
+    UserApproved --> ResumeApproved
+    UserRejected --> ResumeRejected
+    ResumeApproved --> AuditLog
+    ResumeRejected --> AuditLog

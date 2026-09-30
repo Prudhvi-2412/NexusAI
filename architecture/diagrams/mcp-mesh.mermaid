@@ -1,0 +1,38 @@
+flowchart LR
+    subgraph AgentOrchestrator ["LangGraph Agent Core"]
+        Supervisor["Supervisor"]
+        ToolsRegistry["Dynamic Tool Registry"]
+    end
+
+    subgraph MCPClient ["FastAPI MCP Client Layer"]
+        Gateway["MCP Client Gateway / Manager"]
+        Sandbox["Security & Approval Policy Engine"]
+    end
+
+    subgraph MCPServers ["Isolated MCP Servers (JSON-RPC 2.0)"]
+        ServerGmail["mcp-server-gmail\n(stdio / python-mcp)"]
+        ServerCalendar["mcp-server-calendar\n(stdio / python-mcp)"]
+        ServerTelegram["mcp-server-telegram\n(stdio / python-mcp)"]
+        ServerBrowser["mcp-server-playwright\n(stdio / node-mcp)"]
+        ServerCustom["mcp-server-custom\n(SSE transport)"]
+    end
+
+    subgraph Targets ["Real World Endpoints"]
+        GoogleApi["Google Workspace APIs"]
+        TelegramApi["Telegram Bot API"]
+        WebEngine["Headless Chromium Browser"]
+    end
+
+    Supervisor <--> ToolsRegistry
+    ToolsRegistry <--> Gateway
+    Gateway --> Sandbox
+    Sandbox --> ServerGmail
+    Sandbox --> ServerCalendar
+    Sandbox --> ServerTelegram
+    Sandbox --> ServerBrowser
+    Sandbox --> ServerCustom
+
+    ServerGmail --> GoogleApi
+    ServerCalendar --> GoogleApi
+    ServerTelegram --> TelegramApi
+    ServerBrowser --> WebEngine

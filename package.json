@@ -1,0 +1,20 @@
+{
+  "name": "nexusai-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NexusAI - Autonomous AI Chief of Staff & Agentic Operating System",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm --workspace=@nexusai/web run dev",
+    "build": "npm --workspace=@nexusai/web run build",
+    "start": "npm --workspace=@nexusai/web run start",
+    "lint": "npm --workspace=@nexusai/web run lint",
+    "typecheck": "npm --workspace=@nexusai/web run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

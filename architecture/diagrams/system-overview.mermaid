@@ -1,0 +1,63 @@
+flowchart TD
+    subgraph ClientLayer ["Client Layer"]
+        UI["Next.js Web App\n(Dashboard, Chat, Approvals)"]
+        Voice["Voice Input / Audio Stream\n(Future)"]
+        TelegramBot["Telegram Webhook Bot\n(Mobile Access)"]
+    end
+
+    subgraph ApiGateway ["FastAPI Core Gateway"]
+        Auth["OAuth2 & Session Guard"]
+        RestAPI["REST API\n(/api/v1/tasks, memory, apps)"]
+        SSEStream["Server-Sent Events\n(/api/v1/agent/stream)"]
+        ApprovalInterceptor["Approval Interceptor &\nState Machine"]
+    end
+
+    subgraph AgentCore ["LangGraph Supervisor Engine"]
+        Supervisor["Supervisor Router Agent\n(Gemini 1.5 Pro / Claude 3.5)"]
+        CommsAgent["Comms Agent\n(Drafting, Parsing)"]
+        CalendarAgent["Calendar Agent\n(Scheduling, Conflicts)"]
+        BrowserAgent["Browser Agent\n(Playwright Automation)"]
+        MemoryCurator["Memory Curator\n(Vector Sync, Deduplication)"]
+    end
+
+    subgraph McpGateway ["Model Context Protocol (MCP)"]
+        McpClient["MCP Client / Hub"]
+        McpGmail["MCP Server: Gmail\n(Draft, Search, Send)"]
+        McpCal["MCP Server: Google Calendar\n(Events, FreeBusy)"]
+        McpTg["MCP Server: Telegram\n(Send, Listen)"]
+        McpBrowser["MCP Server: Playwright\n(Headless Chromium)"]
+    end
+
+    subgraph StateTier ["State & Persistence Tier"]
+        Postgres[("PostgreSQL 16 + pgvector\n(Memories, Runs, Tasks)")]
+        RedisCache[("Redis 7.2\n(Pub/Sub, Short-term Context)")]
+        TaskQueue["APScheduler / Celery Workers\n(Scheduled Autonomous Tasks)"]
+    end
+
+    UI -->|REST CRUD| RestAPI
+    UI -->|SSE Stream| SSEStream
+    Voice --> RestAPI
+    TelegramBot --> RestAPI
+
+    RestAPI --> Supervisor
+    SSEStream --> Supervisor
+    ApprovalInterceptor <--> Supervisor
+
+    Supervisor --> CommsAgent
+    Supervisor --> CalendarAgent
+    Supervisor --> BrowserAgent
+    Supervisor --> MemoryCurator
+
+    CommsAgent --> McpClient
+    CalendarAgent --> McpClient
+    BrowserAgent --> McpClient
+    MemoryCurator --> McpClient
+
+    McpClient --> McpGmail
+    McpClient --> McpCal
+    McpClient --> McpTg
+    McpClient --> McpBrowser
+
+    Supervisor --> Postgres
+    Supervisor --> RedisCache
+    TaskQueue --> Supervisor

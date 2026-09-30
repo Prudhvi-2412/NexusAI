@@ -1,0 +1,44 @@
+flowchart LR
+    subgraph Inputs ["Input Streams"]
+        ChatMsg["Chat Conversation"]
+        EmailSync["Email Interactions"]
+        CalendarSync["Calendar Events"]
+        AgentOut["Agent Execution Artifacts"]
+    end
+
+    subgraph MemoryCuratorWorker ["Memory Curator Pipeline (Async Worker)"]
+        Extractor["Fact & Entity Extractor (LLM)"]
+        Classifier{"Category Classifier"}
+        Embedder["Embedding Generator (text-embedding-3 / gemini-embedding)"]
+    end
+
+    subgraph MemoryTiers ["PostgreSQL 16 + pgvector"]
+        Preferences[("Preferences Table\n(Constraints, Working Habits)")]
+        Semantic[("Semantic Memory (HNSW Index)\n(Knowledge, Contacts, Policies)")]
+        Episodic[("Episodic Memory\n(Historical Executions & Run Logs)")]
+    end
+
+    subgraph Retrieval ["Runtime Retrieval (Agent Loop)"]
+        QueryVector["Query Vectorizer"]
+        HybridSearch["Hybrid Search: Dense Vector Cosine + BM25 Text"]
+        Reranker["Context Compression & Reranker"]
+        AgentPrompt["Injected Agent Context Window"]
+    end
+
+    ChatMsg --> Extractor
+    EmailSync --> Extractor
+    CalendarSync --> Extractor
+    AgentOut --> Extractor
+
+    Extractor --> Classifier
+    Classifier -->|Constraint| Preferences
+    Classifier -->|Distilled Fact| Embedder
+    Classifier -->|Run Narrative| Episodic
+
+    Embedder --> Semantic
+
+    QueryVector --> HybridSearch
+    Semantic --> HybridSearch
+    Preferences --> HybridSearch
+    HybridSearch --> Reranker
+    Reranker --> AgentPrompt

@@ -1,0 +1,43 @@
+sequenceDiagram
+    autonumber
+    actor User as User / Web Client
+    participant API as FastAPI Gateway
+    participant Sup as LangGraph Supervisor
+    participant Agent as Specialized Agent
+    participant MCP as MCP Gateway
+    participant Ext as External Service (Gmail/Cal)
+    participant DB as Postgres + pgvector
+
+    User->>API: POST /api/v1/agent/stream {message, conversationId}
+    API->>Sup: Initialize Graph Run & Retrieve Context
+    Sup->>DB: Query Relevant Memories (pgvector cosine similarity)
+    DB-->>Sup: Return Top-K Semantic Memories & User Preferences
+    API-->>User: SSE Event: step:start (Understanding request & memory retrieval)
+
+    Sup->>Agent: Delegate Subtask (e.g., CommsAgent: Search Emails)
+    API-->>User: SSE Event: step:start (Gmail Search)
+    Agent->>MCP: Call mcp-gmail.search_threads(query="tax docs")
+    MCP->>Ext: Gmail API Request
+    Ext-->>MCP: Thread list & summaries
+    MCP-->>Agent: Structured Tool Output
+    API-->>User: SSE Event: step:complete (Gmail Search finished)
+
+    Agent-->>Sup: Return Formatted Email Context
+    Sup->>Sup: Synthesize Plan (Draft Reply)
+
+    alt Action Requires Human Approval (e.g., Send Email)
+        Sup->>API: Trigger Approval Required State
+        API-->>User: SSE Event: approval:required {requestId, diff, recipient, body}
+        Note over User,API: Execution Pauses in Redis Checkpoint
+        User->>API: POST /api/v1/approvals/{id}/decision {decision: "approve"}
+        API->>Sup: Resume Graph with Approval Grant
+    end
+
+    Sup->>Agent: Execute Final Tool (Send Email)
+    Agent->>MCP: Call mcp-gmail.send_message(...)
+    MCP->>Ext: Transmit Email
+    Ext-->>MCP: Success Confirmation
+
+    Sup->>DB: Record Episodic Run & Distill New Learned Facts
+    Sup->>API: Complete Execution
+    API-->>User: SSE Event: run:complete {summary, metrics}
