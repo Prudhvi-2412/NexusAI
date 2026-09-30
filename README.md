@@ -163,7 +163,7 @@ Codex should implement the backend in `apps/api` following `docs/CODEX_BACKEND_H
 Target Backend Stack:
 ├── Framework: FastAPI (Async)
 ├── Multi-Agent: LangGraph + LangChain Core
-├── Foundation Models: Google Gemini (gemini-1.5-pro, gemini-1.5-flash via langchain-google-genai)
+├── Foundation Model: Google Gemini (configurable; default gemini-3.8-flash)
 ├── MCP SDK: mcp (Official Python SDK)
 ├── Database: PostgreSQL 16 + pgvector extension
 ├── Cache / Locks: Redis 7.2

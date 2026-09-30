@@ -19,7 +19,7 @@ export const MOCK_AGENTS: Agent[] = [
     role: 'supervisor',
     description: 'High-level goal decomposition, routing, and synthesis coordinator',
     status: 'idle',
-    model: 'gemini-1.5-pro',
+    model: 'gemini-3.8-flash',
     capabilities: [
       { id: 'c1', name: 'Task Planning', description: 'Decompose goals into subtasks', mcpServer: 'core', requiresApproval: false },
       { id: 'c2', name: 'Agent Delegation', description: 'Route sub-goals to specialized workers', mcpServer: 'core', requiresApproval: false },
@@ -33,7 +33,7 @@ export const MOCK_AGENTS: Agent[] = [
     role: 'comms_agent',
     description: 'Email drafting, thread summarization, and Telegram communications',
     status: 'idle',
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.8-flash',
     capabilities: [
       { id: 'c3', name: 'Gmail Read', description: 'Search threads and messages', mcpServer: 'mcp-gmail', requiresApproval: false },
       { id: 'c4', name: 'Gmail Send', description: 'Send external emails', mcpServer: 'mcp-gmail', requiresApproval: true },
@@ -48,7 +48,7 @@ export const MOCK_AGENTS: Agent[] = [
     role: 'calendar_agent',
     description: 'Executive scheduling, conflict resolution, and buffer management',
     status: 'idle',
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.8-flash',
     capabilities: [
       { id: 'c6', name: 'Calendar Availability', description: 'Query free-busy slots', mcpServer: 'mcp-calendar', requiresApproval: false },
       { id: 'c7', name: 'Calendar Booking', description: 'Create and update calendar invites', mcpServer: 'mcp-calendar', requiresApproval: true },
@@ -62,7 +62,7 @@ export const MOCK_AGENTS: Agent[] = [
     role: 'browser_agent',
     description: 'Playwright headless web navigation, data extraction, and form operations',
     status: 'idle',
-    model: 'gemini-1.5-pro',
+    model: 'gemini-3.8-flash',
     capabilities: [
       { id: 'c8', name: 'Web Scraping', description: 'Navigate and extract clean markdown', mcpServer: 'mcp-playwright', requiresApproval: false },
       { id: 'c9', name: 'Form Automation', description: 'Click and enter web credentials', mcpServer: 'mcp-playwright', requiresApproval: true },
@@ -89,11 +89,11 @@ export const MOCK_CONVERSATIONS: Conversation[] = [
     title: 'Quarterly Cloud Budget Analysis',
     createdAt: '2026-09-29T11:15:00Z',
     updatedAt: '2026-09-29T11:45:00Z',
-    lastMessagePreview: 'AWS spend rose 12% due to vector indexing batch jobs.',
+    lastMessagePreview: 'Infrastructure spend rose 12% due to vector indexing batch jobs.',
     messageCount: 4,
     activeAgentId: 'agent_browser',
     pinned: false,
-    tags: ['Finance', 'AWS'],
+    tags: ['Finance', 'Infrastructure'],
   },
   {
     id: 'conv_3',
@@ -750,7 +750,7 @@ export const MOCK_SETTINGS: SystemSettings = {
   },
   model: {
     provider: 'gemini',
-    modelId: 'gemini-1.5-pro',
+    modelId: 'gemini-3.8-flash',
     temperature: 0.2,
     maxOutputTokens: 4096,
     apiKeySet: true,

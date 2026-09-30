@@ -1,5 +1,8 @@
 # NexusAI Backend Implementation Handoff Guide for Codex
 
+> Historical target design: the first FastAPI and Gemini chat slice is now implemented in `apps/api`.
+> This document describes future integrations and is not a description of live features.
+
 Welcome Codex! The frontend, TypeScript contracts, UI components, mock services, and architectural specifications for **NexusAI** are fully established.
 
 This document guides your implementation of the production FastAPI backend without restructuring the monorepo.
@@ -75,8 +78,7 @@ CORS_ORIGINS=["http://localhost:3000"]
 
 # LLM Providers
 GEMINI_API_KEY="your-gemini-api-key"
-OPENAI_API_KEY=""
-ANTHROPIC_API_KEY=""
+GEMINI_MODEL="gemini-3.8-flash"
 
 # Database & Vector Store
 DATABASE_URL="postgresql+asyncpg://nexus:nexus_secret@localhost:5432/nexusai"

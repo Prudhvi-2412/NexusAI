@@ -6,7 +6,7 @@ import { ToastContainer } from '@/components/shared/toast';
 
 export const metadata: Metadata = {
   title: 'NexusAI — Autonomous AI Chief of Staff & Agentic OS',
-  description: 'Enterprise-grade autonomous agentic operating system with MCP tooling, persistent pgvector memory, and human-in-the-loop approvals.',
+  description: 'Gemini-powered personal chief of staff with saved conversations and previews of upcoming integrations.',
 };
 
 export default function RootLayout({

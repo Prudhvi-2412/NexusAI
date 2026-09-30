@@ -228,6 +228,9 @@ export function ChatContainer() {
           } else if (event.type === 'run:error') {
             const runData = event.data as { error?: string };
             setIsStreaming(false);
+            setMessages((prev) => prev.map((m) => m.id === assistantMsgId
+              ? { ...m, isStreaming: false, content: runData.error || 'The request failed.' }
+              : m));
             toast({ title: 'Gemini request failed', description: runData.error || 'Unknown error', variant: 'destructive' });
           } else if (event.type === 'run:complete') {
             const runData = event.data as any;
@@ -305,8 +308,8 @@ export function ChatContainer() {
 
   const handleVoiceInputPlaceholder = () => {
     toast({
-      title: 'Voice Input Initialized',
-      description: 'Voice stream capture interface is ready for WebRTC backend connection.',
+      title: 'Voice input is coming later',
+      description: 'Use the text box for now.',
       variant: 'info',
     });
   };
@@ -429,7 +432,7 @@ export function ChatContainer() {
                   <button
                     type="button"
                     onClick={handleVoiceInputPlaceholder}
-                    title="Voice input placeholder"
+                    title="Voice input is not available yet"
                     className="p-1.5 rounded-lg text-slate-400 hover:text-sky-400 hover:bg-slate-800 transition-colors"
                   >
                     <Mic className="w-4 h-4" />

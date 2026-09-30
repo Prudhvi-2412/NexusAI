@@ -32,6 +32,7 @@ export function Header() {
   };
 
   const { title, subtitle } = getPageTitle(pathname);
+  const displaySubtitle = pathname === '/' ? subtitle : `Preview only · ${subtitle}`;
 
   return (
     <header className="h-16 shrink-0 border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-md px-6 flex items-center justify-between z-20">
@@ -39,7 +40,7 @@ export function Header() {
         <h1 className="text-base font-semibold text-white tracking-tight flex items-center gap-2">
           {title}
         </h1>
-        <p className="text-xs text-slate-400 hidden sm:block">{subtitle}</p>
+        <p className="text-xs text-slate-400 hidden sm:block">{displaySubtitle}</p>
       </div>
 
       <div className="flex items-center gap-3">
