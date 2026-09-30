@@ -15,7 +15,7 @@ export function Header() {
       case '/activity':
         return { title: 'Live Agent Activity', subtitle: 'Real-time orchestration traces & tool timelines' };
       case '/apps':
-        return { title: 'Connected Apps', subtitle: 'Model Context Protocol (MCP) tool integrations' };
+        return { title: 'Connected Apps', subtitle: 'Read-only Google connection' };
       case '/memory':
         return { title: 'Memory Bank', subtitle: 'Semantic memories, user preferences, & pgvector index' };
       case '/tasks':
@@ -32,10 +32,10 @@ export function Header() {
   };
 
   const { title, subtitle } = getPageTitle(pathname);
-  const displaySubtitle = pathname === '/' ? subtitle : `Preview only · ${subtitle}`;
+  const displaySubtitle = pathname === '/' || pathname === '/apps' ? subtitle : `Preview only · ${subtitle}`;
 
   return (
-    <header className="h-16 shrink-0 border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-md px-6 flex items-center justify-between z-20">
+    <header className="h-16 shrink-0 border-b border-slate-800/70 bg-slate-950/35 backdrop-blur-xl px-6 flex items-center justify-between z-20">
       <div>
         <h1 className="text-base font-semibold text-white tracking-tight flex items-center gap-2">
           {title}
@@ -53,7 +53,7 @@ export function Header() {
         {/* Mock Mode / Connection Status */}
         <Badge variant="info" size="sm" className="hidden sm:inline-flex items-center gap-1 font-mono">
           <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
-          <span>{process.env.NEXT_PUBLIC_USE_MOCK_API === 'false' && pathname === '/' ? 'Live Chat' : 'Preview Data'}</span>
+          <span>{process.env.NEXT_PUBLIC_USE_MOCK_API === 'false' && (pathname === '/' || pathname === '/apps') ? 'Live' : 'Preview Data'}</span>
         </Badge>
 
         {/* Security / Guardrail Status */}

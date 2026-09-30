@@ -37,27 +37,25 @@ export function AppsView() {
   const handleToggleConnect = async (app: ConnectedApp) => {
     setConnectingId(app.id);
     try {
-      const res = await api.connectIntegration(app.id);
-      setApps((prev) =>
-        prev.map((a) =>
-          a.id === app.id
-            ? {
-                ...a,
-                status: a.status === 'connected' ? 'disconnected' : 'connected',
-                lastSyncedAt: new Date().toISOString(),
-              }
-            : a
-        )
-      );
+      if (app.status === 'connected' && process.env.NEXT_PUBLIC_USE_MOCK_API === 'false') {
+        await api.disconnectIntegration(app.id);
+      } else {
+        const res = await api.connectIntegration(app.id);
+        if (res.authUrl) {
+          window.location.assign(res.authUrl);
+          return;
+        }
+      }
+      setApps(await api.getIntegrations());
       toast({
         title: app.status === 'connected' ? 'Disconnected App' : 'Connected App',
-        description: `${app.name} MCP server session updated successfully.`,
+        description: `${app.name} connection updated.`,
         variant: app.status === 'connected' ? 'default' : 'success',
       });
     } catch (err) {
       toast({
         title: 'Connection Error',
-        description: 'Failed to update MCP integration state.',
+        description: err instanceof Error ? err.message : 'Failed to update integration state.',
         variant: 'destructive',
       });
     } finally {
@@ -90,14 +88,14 @@ export function AppsView() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <span>Model Context Protocol (MCP) Integrations</span>
+            <span>Connected Apps</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Connect external services, OAuth accounts, and local MCP tool servers.
+            Connect Google for read-only Gmail and Calendar access. Other integrations are planned.
           </p>
         </div>
 
-        <Button
+        {process.env.NEXT_PUBLIC_USE_MOCK_API !== 'false' && <Button
           size="sm"
           variant="primary"
           onClick={() => setIsAddModalOpen(true)}
@@ -105,7 +103,7 @@ export function AppsView() {
         >
           <Plus className="w-3.5 h-3.5 mr-1.5" />
           Add Custom MCP Server
-        </Button>
+        </Button>}
       </div>
 
       {/* Grid of Apps */}
@@ -140,7 +138,7 @@ export function AppsView() {
                 {/* Account / Identifier */}
                 <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80 text-xs font-mono space-y-1">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wider">
-                    MCP Server Registry
+                    Adapter
                   </div>
                   <div className="text-slate-300 truncate">{app.mcpServerName}</div>
                   {app.accountEmail && (
@@ -198,7 +196,7 @@ export function AppsView() {
           isOpen={!!selectedApp}
           onClose={() => setSelectedApp(null)}
           title={`${selectedApp.name} Permissions & Scopes`}
-          description="Model Context Protocol capability permissions granted to the autonomous supervisor."
+          description="Permissions granted to NexusAI for this connection."
           maxWidth="lg"
         >
           <div className="space-y-4">

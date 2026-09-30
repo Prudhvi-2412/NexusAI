@@ -23,7 +23,7 @@ Initiates or continues an agent run. The server returns a stream of events using
   "conversationId": "conv_12345",
   "message": "Summarize my unread emails from the board and schedule a prep call for tomorrow afternoon.",
   "agentId": "supervisor_01",
-  "model": "gemini-3.8-flash",
+  "model": "gemini-3.6-flash",
   "attachments": []
 }
 ```

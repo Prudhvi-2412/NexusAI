@@ -372,14 +372,14 @@ export const api = {
 
   // --- Connected Apps & Integrations ---
   async getIntegrations(): Promise<ConnectedApp[]> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return [...integrationsStore];
+    if (USE_MOCK) return [...integrationsStore];
     const res = await fetch(`${API_BASE_URL}/integrations`);
     if (!res.ok) throw new Error('Failed to fetch integrations');
     return res.json();
   },
 
   async connectIntegration(appId: string): Promise<{ authUrl?: string; connected: boolean }> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       const app = integrationsStore.find((a) => a.id === appId);
       if (app) {
         app.status = app.status === 'connected' ? 'disconnected' : 'connected';
@@ -388,7 +388,14 @@ export const api = {
       return { connected: true };
     }
     const res = await fetch(`${API_BASE_URL}/integrations/${appId}/connect`, { method: 'POST' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Could not start Google connection');
     return res.json();
+  },
+
+  async disconnectIntegration(appId: string): Promise<void> {
+    if (USE_MOCK) return;
+    const res = await fetch(`${API_BASE_URL}/integrations/${appId}/disconnect`, { method: 'POST' });
+    if (!res.ok) throw new Error('Could not disconnect Google');
   },
 
   // --- Observability & Runs ---

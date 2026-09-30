@@ -15,28 +15,45 @@ interface MessageBubbleProps {
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
 
-  // Basic formatted markdown renderer for paragraphs and bullet lists
+  // Render the small, safe subset of Markdown used by assistant summaries.
+  const renderInline = (value: string) => {
+    const normalized = value.replace(/\\([\\`*_])/g, '$1');
+    return normalized.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index} className="font-semibold text-slate-100">{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return <code key={index} className="rounded bg-slate-800 px-1 py-0.5 text-sky-200">{part.slice(1, -1)}</code>;
+      }
+      if (part.startsWith('*') && part.endsWith('*')) {
+        return <em key={index}>{part.slice(1, -1)}</em>;
+      }
+      return part;
+    });
+  };
+
+  // Basic formatted Markdown renderer for paragraphs and lists.
   const renderFormattedContent = (content: string) => {
     const lines = content.split('\n');
     return lines.map((line, idx) => {
       if (line.startsWith('### ')) {
         return (
           <h4 key={idx} className="text-sm font-semibold text-slate-100 mt-3 mb-1">
-            {line.replace('### ', '')}
+            {renderInline(line.replace('### ', ''))}
           </h4>
         );
       }
       if (line.startsWith('- ') || line.startsWith('* ')) {
         return (
           <li key={idx} className="ml-4 list-disc text-slate-300 text-xs sm:text-sm my-0.5">
-            {line.replace(/^[-*]\s+/, '')}
+            {renderInline(line.replace(/^[-*]\s+/, ''))}
           </li>
         );
       }
       if (/^\d+\.\s/.test(line)) {
         return (
           <li key={idx} className="ml-4 list-decimal text-slate-300 text-xs sm:text-sm my-0.5">
-            {line.replace(/^\d+\.\s+/, '')}
+            {renderInline(line.replace(/^\d+\.\s+/, ''))}
           </li>
         );
       }
@@ -45,7 +62,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       }
       return (
         <p key={idx} className="text-xs sm:text-sm text-slate-200 leading-relaxed my-1">
-          {line}
+          {renderInline(line)}
         </p>
       );
     });
@@ -115,7 +132,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
           <div className="mt-3 pt-2 border-t border-slate-800/60">
             <p className="text-[10px] uppercase font-mono tracking-wider text-slate-500 font-semibold mb-1">
-              MCP Tools Executed ({message.toolCalls.length})
+              Tool Activity ({message.toolCalls.length})
             </p>
             <div className="space-y-1">
               {message.toolCalls.map((tc) => (

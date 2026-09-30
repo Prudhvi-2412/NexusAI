@@ -36,9 +36,10 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
 COPY --from=builder /app/apps/web/.next ./apps/web/.next
+COPY --from=builder /app/apps/web/next.config.mjs ./apps/web/next.config.mjs
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
 
 EXPOSE 3000
 
-CMD ["npm", "start", "--workspace=@nexusai/web"]
+CMD ["./node_modules/.bin/next", "start", "apps/web", "-p", "3000"]

@@ -78,7 +78,8 @@ CORS_ORIGINS=["http://localhost:3000"]
 
 # LLM Providers
 GEMINI_API_KEY="your-gemini-api-key"
-GEMINI_MODEL="gemini-3.8-flash"
+GEMINI_MODEL="gemini-3.6-flash"
+GEMINI_FALLBACK_MODEL="gemini-3.5-flash-lite"
 
 # Database & Vector Store
 DATABASE_URL="postgresql+asyncpg://nexus:nexus_secret@localhost:5432/nexusai"

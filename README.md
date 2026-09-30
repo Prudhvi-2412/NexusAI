@@ -3,7 +3,8 @@
 ## Current implementation
 
 The web chat now connects to a FastAPI service with persisted conversations and
-Gemini streaming. Gmail, Calendar, Telegram, browser automation, memory, tasks,
+Gemini streaming with a fallback model. Optional read-only Gmail and Calendar access is available
+through Google OAuth. Telegram, browser automation, memory, tasks,
 approvals, and observability screens remain **interactive previews** and do not
 perform real external actions. The older architecture sections below describe the
 target design, not implemented backend features.
@@ -18,6 +19,22 @@ The Compose ports bind to your own machine. This development slice has no user
 authentication; do not expose it to the public internet. Conversations are stored
 in the local PostgreSQL volume. Without a Gemini key, chat returns a clear
 configuration error rather than a simulated answer.
+The default chat model is `gemini-3.6-flash`, with `gemini-3.5-flash-lite` as a
+fallback when Google reports temporary capacity errors.
+
+### Connect Google for briefings
+
+Create an OAuth web application in Google Cloud Console, enable Gmail API and
+Google Calendar API, and register
+`http://localhost:8000/api/v1/integrations/google/callback` as an authorized
+redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
+`GOOGLE_TOKEN_KEY` in `docker/.env`. Generate the encryption key with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+Then restart Compose, open **Connected Apps**, and connect Google. The app asks
+only for Gmail read-only and Calendar events read-only scopes. The key encrypts
+the saved refresh token; keep it stable and private. The chat can then summarize
+up to 10 unread messages and events in the next 24 hours when requested. These
+Google calls currently use a direct API adapter; an MCP gateway is future work.
 
 > **Phase 1: Monorepo Foundation & Frontend Command Center**  
 > Built for developer-grade autonomous agent orchestration, Model Context Protocol (MCP) ecosystems, and human-in-the-loop governance.
@@ -39,7 +56,7 @@ In this foundational phase, we have established:
    - **Tasks & Scheduled Cron**: Autonomous background routines with cron syntax, interval triggers, priority badges, enable/disable toggles, and creation modal.
    - **Approval Center (Human-in-the-Loop)**: Staged external actions requiring human authorization (Send email, Reschedule calendar, Post message, Browser form submit) with parameter diff viewers and approve/reject feedback loops.
    - **Agent Runs & Observability**: Token economics, cost estimates, P95 latency breakdowns (Planning vs Tool Execution vs Model Inference), error tracking, and full run inspection.
-   - **Settings & Guardrails**: Autonomy levels (Strict, Balanced, High Autonomy), tool gating checkboxes, foundation model selection (Gemini 1.5 Pro/Flash, Claude 3.5 Sonnet, GPT-4o, Ollama), user profile, and alerts.
+   - **Settings & Guardrails**: Preview controls for autonomy, tool gating, model selection, profile, and alerts.
 4. **Resilient Service Abstraction (`lib/api/client.ts`)**: Single-point switch between **Mock Mode** (with real-time simulated SSE stream, tool calls, and stateful memory updates) and real **FastAPI Backend**.
 5. **Architectural Blueprints & Hand-off Docs**: Mermaid flowcharts, REST & SSE contracts, MCP specifications, pgvector memory schemas, and a step-by-step backend roadmap for Codex.
 
@@ -163,7 +180,7 @@ Codex should implement the backend in `apps/api` following `docs/CODEX_BACKEND_H
 Target Backend Stack:
 ├── Framework: FastAPI (Async)
 ├── Multi-Agent: LangGraph + LangChain Core
-├── Foundation Model: Google Gemini (configurable; default gemini-3.8-flash)
+├── Foundation Model: Google Gemini (configurable; default gemini-3.6-flash)
 ├── MCP SDK: mcp (Official Python SDK)
 ├── Database: PostgreSQL 16 + pgvector extension
 ├── Cache / Locks: Redis 7.2
