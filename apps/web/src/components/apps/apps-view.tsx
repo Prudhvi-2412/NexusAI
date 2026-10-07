@@ -14,6 +14,7 @@ import {
   Globe,
   Hash,
   BookOpen,
+  ContactRound,
   Plus,
   CheckCircle2,
   AlertCircle,
@@ -21,20 +22,51 @@ import {
   Shield,
   Terminal,
   RefreshCw,
+  Github,
 } from 'lucide-react';
 import { toast } from '@/lib/hooks/use-toast';
+import { ConnectionAnimation } from '@/components/shared/connection-animation';
 
 export function AppsView() {
   const [apps, setApps] = useState<ConnectedApp[]>([]);
   const [selectedApp, setSelectedApp] = useState<ConnectedApp | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [telegramLink, setTelegramLink] = useState<{ code: string; command: string } | null>(null);
+  const [telegramBusy, setTelegramBusy] = useState(false);
+  const loadApps = () => {
+    setLoading(true); setLoadError(false);
+    api.getIntegrations().then(setApps).catch(() => setLoadError(true)).finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    api.getIntegrations().then(setApps);
+    loadApps();
   }, []);
 
+  useEffect(() => {
+    if (selectedApp?.type !== 'telegram' || !telegramLink) return;
+    const timer = window.setInterval(() => {
+      api.getIntegrations().then((next) => {
+        setApps(next);
+        const telegram = next.find((app) => app.type === 'telegram');
+        if (telegram?.status === 'connected') {
+          setSelectedApp(telegram);
+          setTelegramLink(null);
+          toast({ title: 'Telegram connected', description: 'Your Telegram account is linked to this NexusAI account.', variant: 'success' });
+        }
+      }).catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [selectedApp?.type, telegramLink]);
+
   const handleToggleConnect = async (app: ConnectedApp) => {
+    if (app.type === 'telegram') {
+      setSelectedApp(app);
+      setTelegramLink(null);
+      return;
+    }
     setConnectingId(app.id);
     try {
       if (app.status === 'connected' && process.env.NEXT_PUBLIC_USE_MOCK_API === 'false') {
@@ -69,6 +101,10 @@ export function AppsView() {
         return <Mail className="w-6 h-6 text-rose-400" />;
       case 'google_calendar':
         return <Calendar className="w-6 h-6 text-sky-400" />;
+      case 'google_classroom':
+        return <BookOpen className="w-6 h-6 text-amber-300" />;
+      case 'google_contacts':
+        return <ContactRound className="w-6 h-6 text-violet-300" />;
       case 'telegram':
         return <Send className="w-6 h-6 text-blue-400" />;
       case 'browser_playwright':
@@ -77,21 +113,23 @@ export function AppsView() {
         return <Hash className="w-6 h-6 text-purple-400" />;
       case 'notion':
         return <BookOpen className="w-6 h-6 text-slate-300" />;
+      case 'github':
+        return <Github className="w-6 h-6 text-slate-200" />;
       default:
         return <Terminal className="w-6 h-6 text-sky-400" />;
     }
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="workspace-page space-y-8">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-            <span>Connected Apps</span>
+            <span>Your world, connected.</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Connect Google for read-only Gmail and Calendar access. Other integrations are planned.
+            Give NexusAI the context to help. Gmail drafts pause for your approval and are never sent by NexusAI; other Google and GitHub actions stay read-only.
           </p>
         </div>
 
@@ -107,9 +145,13 @@ export function AppsView() {
       </div>
 
       {/* Grid of Apps */}
+      {loadError && <div role="alert" className="rounded-2xl border border-slate-700 p-6"><p className="text-sm">Your connections couldn’t be loaded.</p><Button variant="outline" onClick={loadApps} className="mt-4">Try again</Button></div>}
+      {loading && <div role="status" aria-label="Loading connections" className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">{[1,2,3].map(i => <div key={i} className="h-64 rounded-2xl bg-white/5 animate-pulse" />)}</div>}
+        {apps.some(app => app.status === 'connected') && <div className="flex items-center gap-4 p-5 rounded-2xl border border-white/[.07] bg-gradient-to-r from-[#303030] to-[#262626]"><ConnectionAnimation /><div><p className="font-medium text-sm">You’re connected.</p><p className="text-sm text-slate-400 mt-1">Ask about email, today’s schedule, Classroom assignments, saved contacts, or your GitHub repositories.</p></div></div>}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {apps.map((app) => {
           const isConnected = app.status === 'connected';
+          const environmentManaged = process.env.NEXT_PUBLIC_USE_MOCK_API === 'false' && app.type === 'telegram';
 
           return (
             <Card
@@ -118,10 +160,11 @@ export function AppsView() {
             >
               <CardHeader>
                 <div className="flex items-start justify-between">
-                  <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/70">
+                  <div className="integration-icon p-3 rounded-2xl border">
                     {getAppIcon(app.type)}
                   </div>
-                  <Badge variant={isConnected ? 'success' : 'default'} size="sm">
+                  <Badge variant={isConnected ? 'success' : 'default'} size="sm" className="gap-1">
+                    {isConnected && <CheckCircle2 size={12} />}
                     {isConnected ? 'Connected' : 'Not Connected'}
                   </Badge>
                 </div>
@@ -138,9 +181,12 @@ export function AppsView() {
                 {/* Account / Identifier */}
                 <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80 text-xs font-mono space-y-1">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wider">
-                    Adapter
+                    Connection
                   </div>
-                  <div className="text-slate-300 truncate">{app.mcpServerName}</div>
+                  <div className="text-slate-300">{environmentManaged
+                    ? isConnected ? 'Linked to your NexusAI account' : 'Shared bot is ready for account linking'
+                    : isConnected ? (app.id === 'app_gmail' ? 'Read access and approval-gated drafts enabled' : 'Read-only access enabled') : 'Ready to connect'}</div>
+                  {environmentManaged && !isConnected && <div className="text-[10px] text-slate-500">Create an expiring link code to connect your Telegram account.</div>}
                   {app.accountEmail && (
                     <div className="text-[11px] text-sky-400 truncate">{app.accountEmail}</div>
                   )}
@@ -152,7 +198,7 @@ export function AppsView() {
                 {/* Declared Tools Pill List */}
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5">
-                    Exposed Tools ({app.toolsProvided.length})
+                    Capabilities ({app.toolsProvided.length})
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {app.toolsProvided.map((tool) => (
@@ -160,7 +206,7 @@ export function AppsView() {
                         key={tool}
                         className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60 truncate max-w-[170px]"
                       >
-                        {tool}
+                        {{gmail_list_unread:'Summarize unread email',calendar_list_upcoming:'View upcoming events'}[tool] || tool.replace(/_/g,' ')}
                       </span>
                     ))}
                   </div>
@@ -172,7 +218,7 @@ export function AppsView() {
                   onClick={() => setSelectedApp(app)}
                   className="text-xs text-slate-400 hover:text-slate-200 font-medium"
                 >
-                  Permissions ({app.scopes.length})
+                  {environmentManaged ? 'Setup details' : `Permissions (${app.scopes.length})`}
                 </button>
 
                 <Button
@@ -180,9 +226,10 @@ export function AppsView() {
                   variant={isConnected ? 'outline' : 'primary'}
                   isLoading={connectingId === app.id}
                   onClick={() => handleToggleConnect(app)}
+                  disabled={false}
                   className="text-xs"
                 >
-                  {isConnected ? 'Disconnect' : 'Connect App'}
+                  {environmentManaged ? isConnected ? 'Manage' : 'Link Telegram' : isConnected ? 'Disconnect' : 'Connect App'}
                 </Button>
               </CardFooter>
             </Card>
@@ -196,16 +243,52 @@ export function AppsView() {
           isOpen={!!selectedApp}
           onClose={() => setSelectedApp(null)}
           title={`${selectedApp.name} Permissions & Scopes`}
-          description="Permissions granted to NexusAI for this connection."
+          description={selectedApp.type === 'telegram'
+            ? 'Link your Telegram account to this NexusAI account. The shared bot only responds after you link it.'
+            : 'Permissions granted to NexusAI for this connection.'}
           maxWidth="lg"
         >
           <div className="space-y-4">
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono space-y-1">
               <div className="text-slate-500 uppercase text-[10px]">Endpoint Protocol</div>
-              <div className="text-sky-300">{selectedApp.mcpServerEndpoint || 'stdio (Local Process Subprocess)'}</div>
+              <div className="text-sky-300">{selectedApp.mcpServerName || 'External connection'}</div>
             </div>
 
-            <div className="space-y-2">
+            {selectedApp.type === 'telegram' ? (
+              <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                {selectedApp.status === 'connected' ? (
+                  <>
+                    <p className="text-sm text-slate-300">Telegram is linked to your NexusAI account. Your messages use your account’s own conversations and Google connections.</p>
+                    <Button size="sm" variant="outline" disabled={telegramBusy} onClick={async () => {
+                      setTelegramBusy(true);
+                      try {
+                        await api.unlinkTelegram();
+                        setSelectedApp({ ...selectedApp, status: 'disconnected', accountHandle: undefined });
+                        setApps(await api.getIntegrations());
+                        setTelegramLink(null);
+                        toast({ title: 'Telegram unlinked', description: 'The bot will no longer access your NexusAI account.', variant: 'success' });
+                      } catch (error) {
+                        toast({ title: 'Could not unlink Telegram', description: error instanceof Error ? error.message : 'Please try again.', variant: 'destructive' });
+                      } finally { setTelegramBusy(false); }
+                    }}>Unlink Telegram</Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-slate-400">Create a one-time code, then send <span className="font-mono text-slate-200">/link YOUR_CODE</span> to <span className="font-medium text-blue-300">@NexusChiefOfStaffBot</span> in a private chat. The code expires in 10 minutes.</p>
+                    {telegramLink && <div className="rounded-lg border border-slate-800 bg-black/30 p-3"><div className="text-[10px] uppercase tracking-wide text-slate-500">One-time command</div><code className="mt-1 block break-all text-sm text-sky-300">{telegramLink.command}</code></div>}
+                    <Button size="sm" variant="primary" disabled={telegramBusy} isLoading={telegramBusy} onClick={async () => {
+                      setTelegramBusy(true);
+                      try {
+                        const link = await api.createTelegramLink();
+                        setTelegramLink(link);
+                      } catch (error) {
+                        toast({ title: 'Could not create link code', description: error instanceof Error ? error.message : 'Please try again.', variant: 'destructive' });
+                      } finally { setTelegramBusy(false); }
+                    }}>{telegramLink ? 'Create a new code' : 'Create link code'}</Button>
+                  </>
+                )}
+              </div>
+            ) : <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-200">Granted Scopes</div>
               <div className="space-y-2">
                 {selectedApp.scopes.map((s) => (
@@ -221,7 +304,7 @@ export function AppsView() {
                   </div>
                 ))}
               </div>
-            </div>
+            </div>}
 
             <div className="flex justify-end pt-2">
               <Button size="sm" variant="secondary" onClick={() => setSelectedApp(null)}>

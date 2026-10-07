@@ -42,4 +42,8 @@ export interface SystemHealthSummary {
   totalCost24hUsd: number;
   pendingApprovalsCount: number;
   connectedAppsCount: number;
+  runs24h?: number;
+  completedRuns24h?: number;
+  failedRuns24h?: number;
+  scheduledTasksCount?: number;
 }

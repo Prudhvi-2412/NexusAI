@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Memory, MemoryCategory } from '@/lib/api/types';
+import { Memory, MemoryCategory, MemorySuggestion } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/shared/card';
 import { Badge } from '@/components/shared/badge';
@@ -19,12 +19,16 @@ import {
   Sparkles,
   Database,
   Filter,
+  Check,
+  X,
 } from 'lucide-react';
 import { formatTimeAgo } from '@/lib/utils';
 import { toast } from '@/lib/hooks/use-toast';
 
 export function MemoryView() {
   const [memories, setMemories] = useState<Memory[]>([]);
+  const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
+  const [resolvingSuggestion, setResolvingSuggestion] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -40,12 +44,50 @@ export function MemoryView() {
     api.getMemories({
       category: activeCategory as any,
       query: searchQuery || undefined,
-    }).then(setMemories);
+    }).then(setMemories).catch(() => toast({ title: 'Could not load memories', description: 'Check that the local API is running, then try again.', variant: 'destructive' }));
   };
 
   useEffect(() => {
     loadMemories();
   }, [activeCategory, searchQuery]);
+
+  useEffect(() => {
+    api.getMemorySuggestions().then(setSuggestions).catch(() => toast({
+      title: 'Could not load memory suggestions',
+      description: 'Try opening Memory again after checking the local API.',
+      variant: 'destructive',
+    }));
+  }, []);
+
+  const updateSuggestion = (id: string, patch: Partial<MemorySuggestion>) => {
+    setSuggestions((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const decideSuggestion = async (suggestion: MemorySuggestion, decision: 'approve' | 'reject') => {
+    setResolvingSuggestion(suggestion.id);
+    try {
+      const result = await api.decideMemorySuggestion(suggestion.id, {
+        decision,
+        ...(decision === 'approve' ? {
+          title: suggestion.title,
+          content: suggestion.content,
+          category: suggestion.category,
+          tags: suggestion.tags,
+        } : {}),
+      });
+      setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
+      if (result.memory) setMemories((current) => [result.memory!, ...current]);
+      toast({
+        title: decision === 'approve' ? 'Memory saved' : 'Suggestion dismissed',
+        description: decision === 'approve' ? 'NexusAI can use this in future conversations.' : 'This suggestion was not saved.',
+        variant: 'success',
+      });
+    } catch {
+      toast({ title: 'Could not update suggestion', description: 'Please try again.', variant: 'destructive' });
+    } finally {
+      setResolvingSuggestion(null);
+    }
+  };
 
   const handleDelete = async (id: string, title: string) => {
     setDeletingId(id);
@@ -89,8 +131,8 @@ export function MemoryView() {
       setNewContent('');
       setNewTags('');
       toast({
-        title: 'Memory Saved & Embedded',
-        description: 'Vector embeddings generated and stored into HNSW index.',
+        title: 'Memory saved',
+        description: 'This memory is now available to future conversations.',
         variant: 'success',
       });
     } catch {
@@ -111,16 +153,16 @@ export function MemoryView() {
   ];
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="workspace-page space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
             <Brain className="w-5 h-5 text-indigo-400" />
-            <span>Persistent Long-Term Memory (pgvector)</span>
+            <span>Context worth keeping.</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Vectorized context, executive constraints, and learned facts injected into the supervisor.
+            Save preferences and facts here. NexusAI can retrieve relevant memories in future conversations.
           </p>
         </div>
 
@@ -134,6 +176,50 @@ export function MemoryView() {
           Add Memory Rule
         </Button>
       </div>
+
+      {suggestions.length > 0 && (
+        <section className="space-y-3" aria-labelledby="memory-review-heading">
+          <div>
+            <h3 id="memory-review-heading" className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-sky-400" /> Review memory suggestions ({suggestions.length})
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">These are proposals from recent chats. Edit or dismiss them; nothing is saved until you approve it.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {suggestions.map((suggestion) => (
+              <Card key={suggestion.id} className="border-sky-400/20 bg-gradient-to-br from-sky-950/25 to-slate-900/80">
+                <CardContent className="space-y-3 pt-5">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="info" size="sm">{suggestion.category}</Badge>
+                    <span className="text-[10px] text-slate-500">Suggested from a chat</span>
+                  </div>
+                  <input
+                    aria-label="Suggested memory title"
+                    value={suggestion.title}
+                    onChange={(event) => updateSuggestion(suggestion.id, { title: event.target.value })}
+                    className="w-full bg-slate-950/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+                  />
+                  <textarea
+                    aria-label="Suggested memory content"
+                    value={suggestion.content}
+                    onChange={(event) => updateSuggestion(suggestion.id, { content: event.target.value })}
+                    rows={3}
+                    className="w-full bg-slate-950/70 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 leading-relaxed resize-y focus:outline-none focus:border-sky-500"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => decideSuggestion(suggestion, 'reject')} disabled={resolvingSuggestion === suggestion.id}>
+                      <X className="w-3.5 h-3.5" /> Dismiss
+                    </Button>
+                    <Button size="sm" variant="primary" onClick={() => decideSuggestion(suggestion, 'approve')} disabled={resolvingSuggestion === suggestion.id || !suggestion.title.trim() || !suggestion.content.trim()} isLoading={resolvingSuggestion === suggestion.id}>
+                      <Check className="w-3.5 h-3.5" /> Save memory
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -264,7 +350,7 @@ export function MemoryView() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         title="Add Verified Memory Rule"
-        description="Insert facts, working habits, or constraints into the agent's long-term vector memory."
+        description="Save facts, working habits, or constraints for future conversations."
         maxWidth="md"
       >
         <form onSubmit={handleCreateMemory} className="space-y-4 text-xs">

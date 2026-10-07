@@ -1,4 +1,5 @@
 /** @type {import('tailwindcss').Config} */
+const neutral = {50:'#fafafa',100:'#f2f2f2',200:'#dedede',300:'#c5c5c5',400:'#a6a6a6',500:'#969696',600:'#666666',700:'#474747',800:'#353535',900:'#282828',950:'#191919'};
 module.exports = {
   darkMode: ['class'],
   content: [
@@ -9,6 +10,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        slate: neutral, sky: neutral, blue: neutral, indigo: neutral, purple: neutral, violet: neutral, emerald: neutral, green: neutral, amber: neutral, yellow: neutral, rose: neutral, red: neutral, cyan: neutral, orange: neutral,
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -42,24 +44,12 @@ module.exports = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        nexus: {
-          50: '#f0f7ff',
-          100: '#e0effe',
-          200: '#bae0fd',
-          300: '#7cc8fb',
-          400: '#38aaf6',
-          500: '#0e8ee8',
-          600: '#0270c6',
-          700: '#0359a0',
-          800: '#074c83',
-          900: '#0c406e',
-          950: '#082848',
-        },
+        nexus: neutral,
         surface: {
-          base: '#090d16',
-          raised: '#0f172a',
-          overlay: '#172033',
-          highlight: '#1e293b',
+          base: '#1f1f1f',
+          raised: '#262626',
+          overlay: '#303030',
+          highlight: '#353535',
           border: 'rgba(255, 255, 255, 0.08)',
           hover: 'rgba(255, 255, 255, 0.04)',
         }
@@ -70,7 +60,7 @@ module.exports = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', '"Segoe UI"', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       keyframes: {

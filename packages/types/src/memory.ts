@@ -21,6 +21,17 @@ export interface Memory {
   };
 }
 
+export interface MemorySuggestion {
+  id: string;
+  conversationId: string;
+  category: MemoryCategory;
+  title: string;
+  content: string;
+  tags: string[];
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+}
+
 export interface MemorySearchParams {
   query?: string;
   category?: MemoryCategory | 'all';

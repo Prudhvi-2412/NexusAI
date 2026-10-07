@@ -1,5 +1,7 @@
 # NexusAI Agent Orchestration Architecture
 
+> **Implementation status (2026-10-07):** The running chat uses a LangGraph supervisor, six account-scoped read specialists, durable Postgres checkpoints (SQLite in local tests), and streamed handoffs. Failed runs can resume from their saved checkpoint in Activity. Write-capable configured MCP tools and Gmail draft creation are staged as account-owned approvals; their action graph pauses durably and invokes the action only after approval. Gmail drafts are saved to Drafts and are never sent by NexusAI. Rejected or expired actions do not execute. Deployment MCP tools remain restricted to the configured service owner. Specialists execute connector reads rather than independent LLM conversations. Browser automation and automatic memory curation remain future work.
+
 This document describes the multi-agent orchestration architecture for NexusAI, specifying how **LangGraph** coordinates the supervisor and specialized sub-agents.
 
 ---

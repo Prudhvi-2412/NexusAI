@@ -42,11 +42,14 @@ export type ExecutionEventType =
   | 'step:start'
   | 'step:update'
   | 'step:complete'
+  | 'agent:handoff'
   | 'tool:start'
   | 'tool:end'
   | 'stream:chunk'
   | 'approval:required'
+  | 'memory:suggestions'
   | 'run:complete'
+  | 'run:paused'
   | 'run:error';
 
 export interface ExecutionEvent {

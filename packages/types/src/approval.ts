@@ -2,7 +2,7 @@ export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 export type ApprovalImpact = 'low' | 'medium' | 'high' | 'critical';
 
 export interface ApprovalActionPayload {
-  service: 'gmail' | 'calendar' | 'telegram' | 'browser' | 'database' | 'system';
+  service: string;
   action: string;
   target: string;
   parameters: Record<string, unknown>;

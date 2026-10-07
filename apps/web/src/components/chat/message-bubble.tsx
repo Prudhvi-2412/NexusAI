@@ -1,12 +1,15 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Message } from '@/lib/api/types';
 import { ToolCallBadge } from './tool-call-badge';
 import { ReasoningAccordion } from './reasoning-accordion';
-import { Bot, User, ShieldAlert, ArrowRight } from 'lucide-react';
+import { Bot, User, ShieldAlert, ArrowRight, Volume2, VolumeX } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { Copy, Check } from 'lucide-react';
+import { Brand } from '@/components/layout/app-shell';
+import { toast } from '@/lib/hooks/use-toast';
 
 interface MessageBubbleProps {
   message: Message;
@@ -14,6 +17,36 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  useEffect(() => () => { if (speaking) window.speechSynthesis?.cancel(); }, [speaking]);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(message.content); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
+    catch { toast({title:'Could not copy', description:'Select the response text to copy it.'}); }
+  };
+  const speak = () => {
+    if (!('speechSynthesis' in window)) {
+      toast({ title: 'Spoken replies aren’t supported here', description: 'Your browser does not provide speech playback.', variant: 'info' });
+      return;
+    }
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const spokenText = message.content.slice(0, 12000)
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/^\s*[-*]\s+/gm, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/`([^`]*)`/g, '$1');
+    const utterance = new SpeechSynthesisUtterance(spokenText);
+    utterance.lang = navigator.language || 'en-US';
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  };
 
   // Render the small, safe subset of Markdown used by assistant summaries.
   const renderInline = (value: string) => {
@@ -32,71 +65,65 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     });
   };
 
-  // Basic formatted Markdown renderer for paragraphs and lists.
   const renderFormattedContent = (content: string) => {
     const lines = content.split('\n');
-    return lines.map((line, idx) => {
-      if (line.startsWith('### ')) {
-        return (
-          <h4 key={idx} className="text-sm font-semibold text-slate-100 mt-3 mb-1">
-            {renderInline(line.replace('### ', ''))}
-          </h4>
-        );
+    const output: React.ReactNode[] = [];
+    let index = 0;
+    while(index < lines.length) {
+      const line = lines[index];
+      if(line.startsWith('```')) {
+        const code: string[] = []; const key = index++;
+        while(index < lines.length && !lines[index].startsWith('```')) code.push(lines[index++]);
+        index++;
+        output.push(<pre key={key} className="my-4 overflow-x-auto rounded-xl bg-[#292929] p-4 text-sm"><code>{code.join('\n')}</code></pre>);
+        continue;
       }
-      if (line.startsWith('- ') || line.startsWith('* ')) {
-        return (
-          <li key={idx} className="ml-4 list-disc text-slate-300 text-xs sm:text-sm my-0.5">
-            {renderInline(line.replace(/^[-*]\s+/, ''))}
-          </li>
-        );
+      if(/^\s*([-*] |\d+\. )/.test(line)) {
+        const ordered = /^\s*\d+\./.test(line); const items: React.ReactNode[] = []; const key=index;
+        const pattern = ordered ? /^\s*\d+\.\s/ : /^\s*[-*]\s/;
+        while(index < lines.length && pattern.test(lines[index])) {
+          items.push(<li key={index} className="pl-1 my-2">{renderInline(lines[index].replace(pattern,''))}</li>); index++;
+        }
+        output.push(ordered ? <ol key={key} className="list-decimal pl-5 my-3 space-y-2">{items}</ol> : <ul key={key} className="list-disc pl-5 my-3 space-y-2">{items}</ul>);
+        continue;
       }
-      if (/^\d+\.\s/.test(line)) {
-        return (
-          <li key={idx} className="ml-4 list-decimal text-slate-300 text-xs sm:text-sm my-0.5">
-            {renderInline(line.replace(/^\d+\.\s+/, ''))}
-          </li>
-        );
-      }
-      if (!line.trim()) {
-        return <div key={idx} className="h-2" />;
-      }
-      return (
-        <p key={idx} className="text-xs sm:text-sm text-slate-200 leading-relaxed my-1">
-          {renderInline(line)}
-        </p>
-      );
-    });
+      if(/^#{1,3} /.test(line)) output.push(<h3 key={index} className="font-semibold text-lg mt-6 mb-2">{renderInline(line.replace(/^#{1,3} /,''))}</h3>);
+      else if(line.trim()) output.push(<p key={index} className="my-2 text-slate-200">{renderInline(line)}</p>);
+      else output.push(<div key={index} className="h-2"/>);
+      index++;
+    }
+    return output;
   };
 
   return (
     <div
       className={cn(
-        'flex gap-3 max-w-4xl w-full mx-auto py-3 animate-fade-in',
+        'flex gap-3 max-w-[760px] w-full mx-auto py-5 animate-fade-in',
         isUser ? 'justify-end' : 'justify-start'
       )}
     >
       {/* Assistant Avatar */}
       {!isUser && (
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-md shadow-sky-500/10 text-white mt-0.5">
-          <Bot className="w-4 h-4" />
+        <div className="w-7 h-7 flex items-center justify-center shrink-0 mt-1">
+          <Brand size={24} />
         </div>
       )}
 
       {/* Bubble Container */}
       <div
         className={cn(
-          'flex flex-col max-w-[85%] rounded-2xl p-4 transition-all',
+          'flex flex-col min-w-0 rounded-2xl transition-all',
           isUser
-            ? 'bg-sky-600 text-white shadow-md shadow-sky-600/15 rounded-tr-sm ml-auto'
-            : 'bg-slate-900/90 border border-slate-800/90 shadow-lg shadow-black/20 rounded-tl-sm'
+            ? 'bg-[#303030] text-white px-5 py-3 max-w-[85%] ml-auto'
+            : 'flex-1 py-1'
         )}
       >
         {/* Header line for Assistant */}
         {!isUser && (
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/60">
+          <div className="flex items-center justify-between pb-2 mb-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-sky-400">
-                {message.agentName || 'Nexus Supervisor'}
+                NexusAI
               </span>
               <span className="text-[10px] text-slate-500 font-mono">
                 {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -121,12 +148,13 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
 
         {/* Message Content Body */}
-        <div className="prose prose-invert prose-sm max-w-none break-words">
+        <div className="chat-copy max-w-none break-words">
           {renderFormattedContent(message.content)}
           {message.isStreaming && (
             <span className="inline-block w-2 h-4 ml-1 bg-sky-400 animate-pulse align-middle" />
           )}
         </div>
+        {!isUser && !message.isStreaming && message.content && <div className="flex items-center gap-1 self-start mt-3"><button onClick={copy} aria-label={copied ? 'Response copied' : 'Copy response'} className="p-2 -ml-2 text-slate-500 hover:text-white rounded-lg hover:bg-white/5">{copied ? <Check size={16} /> : <Copy size={16} />}</button><button onClick={speak} aria-label={speaking ? 'Stop speaking response' : 'Read response aloud'} aria-pressed={speaking} title={speaking ? 'Stop speaking' : 'Read aloud'} className="p-2 text-slate-500 hover:text-white rounded-lg hover:bg-white/5">{speaking ? <VolumeX size={16} /> : <Volume2 size={16} />}</button></div>}
 
         {/* Tool Calls */}
         {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
@@ -161,7 +189,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       </div>
 
       {/* User Avatar */}
-      {isUser && (
+      {false && isUser && (
         <div className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 text-slate-300 mt-0.5">
           <User className="w-4 h-4" />
         </div>

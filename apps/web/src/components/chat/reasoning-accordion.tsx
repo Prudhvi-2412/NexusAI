@@ -16,7 +16,7 @@ export function ReasoningAccordion({
   agentName = 'Nexus Supervisor',
   isStreaming = false,
 }: ReasoningAccordionProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   if (!steps || steps.length === 0) return null;
 
@@ -34,7 +34,7 @@ export function ReasoningAccordion({
           <div className="w-5 h-5 rounded-md bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
             <Sparkles className="w-3 h-3" />
           </div>
-          <span className="font-semibold text-slate-200">{agentName} Execution Steps</span>
+          <span className="font-medium text-slate-300">Response activity</span>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
             {completedCount}/{steps.length} completed
           </span>

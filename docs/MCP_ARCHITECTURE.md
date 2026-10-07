@@ -1,5 +1,7 @@
 # NexusAI Model Context Protocol (MCP) Architecture
 
+> **Implementation status (2026-10-07):** The API has a per-account MCP gateway for remote public HTTPS servers configured in Settings, plus optional operator-managed stdio/HTTP servers from `MCP_SERVERS_JSON` available only to the configured service owner. User bearer tokens are Fernet-encrypted at rest, account queries are owner-scoped, and private/reserved DNS targets are rejected before connecting. Tool discovery runs at request time; read-only tools can run directly and write or unannotated tools enter the durable approval flow. Editing a server URL changes its internal identity, so approvals staged for the previous URL fail closed. Google Gmail and Calendar remain account-scoped direct API adapters. See `CHANNEL_SETUP.md` for the setup and security boundaries.
+
 NexusAI leverages the **Model Context Protocol (MCP)** developed by Anthropic as an open standard to connect the agent orchestration layer to third-party tools, data sources, and execution sandboxes.
 
 ---
@@ -103,9 +105,10 @@ class McpToolInterceptor:
 
 ---
 
-## 4. Codex Implementation Checklist for MCP
-1. [ ] Install `mcp` Python SDK: `pip install mcp`
-2. [ ] Implement `NexusMcpClientManager` to maintain active stdio processes.
-3. [ ] Register dynamic tool schemas with LangChain / LangGraph `StructuredTool`.
-4. [ ] Implement interceptor to persist `ApprovalRequest` models in PostgreSQL when approval-flagged tools are called.
-5. [ ] Wire SSE emitter to send `tool:start`, `tool:end`, and `approval:required` events to the web frontend.
+## 4. Current Implementation and Next Work
+
+- Per-account HTTPS MCP connector management is available under Settings → MCP connectors. The API stores endpoint metadata and encrypted bearer credentials under the signed-in owner.
+- Tool discovery is live. A connector can be tested from Settings; discovered read-only tools can run directly, while write or unannotated tools require approval.
+- Operator `MCP_SERVERS_JSON` configuration remains available to the configured service owner, including stdio fixture servers.
+- User-configured stdio processes, connector OAuth flows, richer auth schemes, and distributed connection pooling are not implemented.
+- Remote DNS is checked before connection to reject loopback, private, and reserved addresses. Deployments should still apply network egress controls at the container/network layer.

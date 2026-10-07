@@ -5,7 +5,7 @@ export function Card({ className, children, ...props }: React.HTMLAttributes<HTM
   return (
     <div
       className={cn(
-        'rounded-xl border border-slate-800/80 bg-slate-900/50 backdrop-blur-sm shadow-sm transition-all',
+        'nexus-card rounded-2xl border border-white/[.07] bg-[#262626] shadow-sm',
         className
       )}
       {...props}
@@ -17,7 +17,7 @@ export function Card({ className, children, ...props }: React.HTMLAttributes<HTM
 
 export function CardHeader({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('p-5 pb-3 flex flex-col gap-1', className)} {...props}>
+    <div className={cn('p-6 pb-4 flex flex-col gap-2', className)} {...props}>
       {children}
     </div>
   );
@@ -41,7 +41,7 @@ export function CardDescription({ className, children, ...props }: React.HTMLAtt
 
 export function CardContent({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('p-5 pt-2', className)} {...props}>
+    <div className={cn('p-6 pt-2', className)} {...props}>
       {children}
     </div>
   );
@@ -49,7 +49,7 @@ export function CardContent({ className, children, ...props }: React.HTMLAttribu
 
 export function CardFooter({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('p-5 pt-0 flex items-center border-t border-slate-800/60 mt-3 pt-4', className)} {...props}>
+    <div className={cn('p-6 pt-4 flex items-center border-t border-white/[.06] mt-3', className)} {...props}>
       {children}
     </div>
   );

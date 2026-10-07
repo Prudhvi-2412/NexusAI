@@ -7,3 +7,4 @@ export * from './approval';
 export * from './integration';
 export * from './observability';
 export * from './settings';
+export * from './mcp';

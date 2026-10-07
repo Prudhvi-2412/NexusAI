@@ -11,7 +11,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-md w-full pointer-events-none">
+    <div role="status" aria-live="polite" className="fixed bottom-24 md:bottom-5 right-4 z-50 flex flex-col gap-2 w-[calc(100%-2rem)] max-w-md pointer-events-none">
       {toasts.map((t) => {
         const isSuccess = t.variant === 'success';
         const isDestructive = t.variant === 'destructive';
@@ -41,6 +41,7 @@ export function ToastContainer() {
               )}
             </div>
             <button
+              aria-label="Dismiss notification"
               onClick={() => dismiss(t.id)}
               className="shrink-0 p-1 hover:bg-white/10 rounded-md transition-colors text-slate-400 hover:text-slate-100"
             >

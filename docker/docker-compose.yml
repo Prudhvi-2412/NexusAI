@@ -1,5 +1,6 @@
 services:
   postgres:
+    profiles: ["local-db"]
     image: pgvector/pgvector:pg16
     container_name: nexusai-postgres
     restart: unless-stopped
@@ -53,7 +54,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-nexus}:${POSTGRES_PASSWORD:-nexus_secret}@postgres:5432/${POSTGRES_DB:-nexusai}
+      - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.6-flash}
@@ -62,11 +63,16 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_TOKEN_KEY=${GOOGLE_TOKEN_KEY}
+      - GOOGLE_AUTH_ALLOWED_EMAIL=${GOOGLE_AUTH_ALLOWED_EMAIL}
+      - SESSION_SECRET=${SESSION_SECRET}
       - GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/integrations/google/callback
+      - GITHUB_APP_CLIENT_ID=${GITHUB_APP_CLIENT_ID:-}
+      - GITHUB_APP_CLIENT_SECRET=${GITHUB_APP_CLIENT_SECRET:-}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:8000/api/v1/integrations/github/callback}
       - WEB_URL=http://localhost:3000
+      - MCP_SERVERS_JSON=${MCP_SERVERS_JSON:-[]}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 

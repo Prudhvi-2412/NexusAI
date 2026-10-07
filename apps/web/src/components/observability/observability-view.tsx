@@ -40,30 +40,30 @@ export function ObservabilityView() {
   });
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="workspace-page space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-sky-400" />
-            <span>Agent Runs & Observability Pipeline</span>
+            <span>The bigger picture.</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Trace execution latency, token economics, tool call frequencies, and runtime anomalies.
+            Review recorded runs and measured response times for this account.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <Badge variant="success" size="md" className="font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1"></span>
-            OpenTelemetry Exporter Active
+            Account data
           </Badge>
         </div>
       </div>
 
       {/* KPI Highlights Grid */}
       {health && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
           <Card className="bg-slate-900/40">
             <CardContent className="pt-5 space-y-1">
               <div className="text-[11px] uppercase tracking-wider text-slate-400 font-mono flex items-center gap-1.5">
@@ -71,7 +71,7 @@ export function ObservabilityView() {
                 <span>24h Success Rate</span>
               </div>
               <div className="text-2xl font-bold text-white font-mono">{health.successRate24h}%</div>
-              <div className="text-[10px] text-emerald-400 font-mono">0 unrecovered crashes</div>
+              <div className="text-[10px] text-slate-400 font-mono">{health.completedRuns24h ?? 0} completed / {health.runs24h ?? 0} runs</div>
             </CardContent>
           </Card>
 
@@ -84,7 +84,7 @@ export function ObservabilityView() {
               <div className="text-2xl font-bold text-white font-mono">
                 {formatDuration(health.averageLatencyMs)}
               </div>
-              <div className="text-[10px] text-sky-300 font-mono">P95: 4.8s (Tool Bound)</div>
+              <div className="text-[10px] text-sky-300 font-mono">Completed runs, last 24 hours</div>
             </CardContent>
           </Card>
 
@@ -92,12 +92,12 @@ export function ObservabilityView() {
             <CardContent className="pt-5 space-y-1">
               <div className="text-[11px] uppercase tracking-wider text-slate-400 font-mono flex items-center gap-1.5">
                 <Zap className="w-3.5 h-3.5 text-amber-400" />
-                <span>24h Token Volume</span>
+                <span>24h Run Volume</span>
               </div>
               <div className="text-2xl font-bold text-white font-mono">
-                {(health.totalTokens24h / 1000).toFixed(1)}k
+                {health.runs24h ?? 0}
               </div>
-              <div className="text-[10px] text-slate-400 font-mono">Avg: 2,450 tokens/run</div>
+              <div className="text-[10px] text-slate-400 font-mono">{health.failedRuns24h ?? 0} failed runs</div>
             </CardContent>
           </Card>
 
@@ -105,12 +105,12 @@ export function ObservabilityView() {
             <CardContent className="pt-5 space-y-1">
               <div className="text-[11px] uppercase tracking-wider text-slate-400 font-mono flex items-center gap-1.5">
                 <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
-                <span>24h Estimated Cost</span>
+                <span>Pending Approvals</span>
               </div>
               <div className="text-2xl font-bold text-white font-mono">
-                ${health.totalCost24hUsd.toFixed(3)}
+                {health.pendingApprovalsCount}
               </div>
-              <div className="text-[10px] text-emerald-400 font-mono">Under $25.00 daily budget</div>
+              <div className="text-[10px] text-slate-400 font-mono">Awaiting your decision</div>
             </CardContent>
           </Card>
         </div>
@@ -139,7 +139,14 @@ export function ObservabilityView() {
       </div>
 
       {/* Runs Table */}
-      <Card className="bg-slate-900/60 overflow-hidden">
+      <div className="grid sm:grid-cols-2 gap-3 lg:hidden">
+        {filteredRuns.map(run => <button key={run.id} onClick={() => setSelectedRun(run)} className="nexus-card rounded-2xl border border-white/[.07] bg-[#262626] p-5 text-left hover:bg-[#303030] transition-colors">
+          <div className="flex items-center justify-between gap-3 mb-4"><span className="text-xs text-slate-400">{run.agentName}</span><Badge size="sm">{run.status}</Badge></div>
+          <p className="text-sm font-medium leading-relaxed">{run.taskTitle}</p>
+          <div className="flex items-center gap-4 text-xs text-slate-400 mt-4"><span>{formatDuration(run.durationMs)}</span><span>{run.toolCallCount} tools</span><span className="ml-auto">View details →</span></div>
+        </button>)}
+      </div>
+      <Card className="hidden lg:block bg-slate-900/60 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-950/80 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
@@ -150,7 +157,7 @@ export function ObservabilityView() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Duration</th>
                 <th className="px-4 py-3">Tools</th>
-                <th className="px-4 py-3">Tokens / Cost</th>
+                <th className="px-4 py-3">Recorded At</th>
                 <th className="px-4 py-3 text-right">Details</th>
               </tr>
             </thead>
@@ -193,13 +200,10 @@ export function ObservabilityView() {
                     </span>
                   </td>
                   <td className="px-4 py-3.5 text-slate-300 whitespace-nowrap">
-                    <span>{run.metrics.totalTokens.toLocaleString()} t</span>
-                    <span className="text-[10px] text-slate-500 ml-1.5">
-                      (${run.metrics.estimatedCostUsd.toFixed(4)})
-                    </span>
+                    <span>{formatTimeAgo(run.startedAt)}</span>
                   </td>
                   <td className="px-4 py-3.5 text-right">
-                    <button className="text-slate-400 hover:text-sky-400 p-1">
+                    <button aria-label={'View details for ' + run.taskTitle} onClick={() => setSelectedRun(run)} className="text-slate-400 hover:text-sky-400 p-1">
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </td>
@@ -226,37 +230,15 @@ export function ObservabilityView() {
               <p className="text-sm font-semibold text-white">{selectedRun.taskTitle}</p>
             </div>
 
-            {/* Latency Breakdown Bar */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span className="uppercase">Latency Breakdown (Total: {formatDuration(selectedRun.latency.totalMs)})</span>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
-                  <div className="text-[10px] text-slate-500 uppercase">Supervisor Planning</div>
-                  <div className="text-sm font-bold text-sky-400 mt-1">
-                    {formatDuration(selectedRun.latency.planningMs)}
-                  </div>
-                </div>
-                <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
-                  <div className="text-[10px] text-slate-500 uppercase">MCP Tool Subprocesses</div>
-                  <div className="text-sm font-bold text-indigo-400 mt-1">
-                    {formatDuration(selectedRun.latency.toolExecutionMs)}
-                  </div>
-                </div>
-                <div className="p-2.5 rounded bg-slate-900 border border-slate-800">
-                  <div className="text-[10px] text-slate-500 uppercase">LLM Synthesis Inference</div>
-                  <div className="text-sm font-bold text-purple-400 mt-1">
-                    {formatDuration(selectedRun.latency.modelInferenceMs)}
-                  </div>
-                </div>
-              </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-slate-300">
+              <span className="text-[11px] uppercase text-slate-500">Recorded run</span>
+              <p className="mt-1">Started {new Date(selectedRun.startedAt).toLocaleString()} · Duration {formatDuration(selectedRun.durationMs)}</p>
             </div>
 
             {/* Tools Invoked */}
             <div className="space-y-1.5">
               <div className="text-[11px] uppercase text-slate-500 font-semibold">
-                MCP Tools Executed ({selectedRun.toolsUsed.length})
+                Tools Called ({selectedRun.toolsUsed.length})
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {selectedRun.toolsUsed.map((t) => (

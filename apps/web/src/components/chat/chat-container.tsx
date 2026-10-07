@@ -10,6 +10,7 @@ import {
   Send,
   Square,
   Mic,
+  MicOff,
   Activity,
   Plus,
   Sparkles,
@@ -19,6 +20,9 @@ import {
 } from 'lucide-react';
 import { toast } from '@/lib/hooks/use-toast';
 import { MOCK_ACTIVE_RUN } from '@/lib/api/mock-data';
+import { motion } from 'motion/react';
+import { ArrowUp, Mail, Calendar, PenLine } from 'lucide-react';
+import { Brand } from '@/components/layout/app-shell';
 
 export function ChatContainer() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -26,12 +30,17 @@ export function ChatContainer() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [speechRecognitionAvailable, setSpeechRecognitionAvailable] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [activeRun, setActiveRun] = useState<AgentRun | null>(
     process.env.NEXT_PUBLIC_USE_MOCK_API === 'false' ? null : MOCK_ACTIVE_RUN
   );
-  const [isActivityOpen, setIsActivityOpen] = useState(true);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const recognitionRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load conversations and initial messages
@@ -42,19 +51,32 @@ export function ChatContainer() {
         setConversations(available);
         setActiveConvId(available[0].id);
       })
-      .catch((error) => toast({ title: 'Could not load conversations', description: String(error), variant: 'destructive' }));
+      .catch(() => { setIsLoadingMessages(false); setLoadError(true); });
   }, []);
 
   useEffect(() => {
+    let current = true;
     if (activeConvId) {
+      setIsLoadingMessages(true);
       api.getMessages(activeConvId).then((msgs) => {
-        setMessages(msgs);
-      });
+        if(current) setMessages(msgs);
+      }).catch(() => toast({title:'Could not load this conversation',description:'Try selecting the conversation again.'}))
+        .finally(() => {if(current) setIsLoadingMessages(false);});
     }
+    return () => { current = false; };
   }, [activeConvId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const speechWindow = window as Window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
+    setSpeechRecognitionAvailable(Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition));
+    return () => {
+      recognitionRef.current?.abort();
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block:'end' });
   }, [messages, isStreaming]);
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -126,12 +148,28 @@ export function ChatContainer() {
     abortControllerRef.current = abortController;
 
     // 3. Initiate Streaming Call
+    let runFailed = false;
+    let runPaused = false;
     api.streamAgentRun(
       text,
       activeConvId,
       {
         onEvent: (event) => {
-          if (event.type === 'step:start') {
+          if (event.type === 'agent:handoff') {
+            const handoff = event.data as any;
+            setActiveRun((prev) => prev ? {
+              ...prev,
+              steps: [...prev.steps, {
+                id: `handoff_${prev.steps.length}`,
+                name: 'Agent handoff',
+                type: 'delegation',
+                agentName: handoff.toAgent || 'Nexus Supervisor',
+                summary: `${handoff.fromAgent || 'Nexus Supervisor'} → ${handoff.toAgent || 'Nexus Supervisor'}: ${handoff.reason || 'Continue the request'}`,
+                status: 'completed',
+                startedAt: new Date().toISOString(),
+              }],
+            } : null);
+          } else if (event.type === 'step:start') {
             const stepData = event.data as any;
             const newStep: ActivityStep = {
               id: stepData.stepId || `s_${Date.now()}`,
@@ -225,7 +263,28 @@ export function ChatContainer() {
                   : m
               )
             );
+          } else if (event.type === 'approval:required') {
+            const approval = event.data as { approvalRequestId?: string };
+            setMessages((prev) => prev.map((m) => m.id === assistantMsgId
+              ? { ...m, approvalRequestId: approval.approvalRequestId }
+              : m));
+          } else if (event.type === 'memory:suggestions') {
+            const memoryEvent = event.data as { count?: number };
+            toast({
+              title: `${memoryEvent.count || 1} memory suggestion${memoryEvent.count === 1 ? '' : 's'} ready to review`,
+              description: 'Open Memory to edit, save, or dismiss them. Nothing was saved automatically.',
+              variant: 'default',
+            });
+          } else if (event.type === 'run:paused') {
+            runPaused = true;
+            setActiveRun((prev) => prev ? { ...prev, status: 'paused' } : null);
+            setMessages((prev) => prev.map((m) => m.id === assistantMsgId
+              ? { ...m, executionSummary: (m.executionSummary || []).map((step) => step.status === 'in_progress' ? { ...step, status: 'pending' as const, description: 'Waiting for your approval' } : step) }
+              : m));
+            setIsStreaming(false);
           } else if (event.type === 'run:error') {
+            runFailed = true;
+            setActiveRun(prev => prev ? {...prev,status:'failed'} : null);
             const runData = event.data as { error?: string };
             setIsStreaming(false);
             setMessages((prev) => prev.map((m) => m.id === assistantMsgId
@@ -256,7 +315,10 @@ export function ChatContainer() {
           );
         },
         onError: (err) => {
+          runFailed = true;
+          setActiveRun(prev => prev ? {...prev,status:'failed'} : null);
           setIsStreaming(false);
+          setMessages(prev => prev.map(m => m.id === assistantMsgId ? {...m,isStreaming:false,content:m.content || 'The response was interrupted. Please try again.'} : m));
           toast({
             title: 'Agent Execution Paused',
             description: err.message,
@@ -273,7 +335,7 @@ export function ChatContainer() {
                     isStreaming: false,
                     executionSummary: (m.executionSummary || []).map((s) => ({
                       ...s,
-                      status: 'completed' as const,
+                      status: runFailed || runPaused ? s.status : 'completed' as const,
                     })),
                   }
                 : m
@@ -291,9 +353,10 @@ export function ChatContainer() {
       abortControllerRef.current = null;
     }
     setIsStreaming(false);
+    setMessages(prev => prev.map(m => m.isStreaming ? {...m,isStreaming:false,content:m.content || 'Response stopped.'} : m));
     toast({
-      title: 'Execution Cancelled',
-      description: 'The operator manually halted active agent subtasks.',
+      title: 'Response stopped',
+      description: 'You can send another message when you’re ready.',
       variant: 'default',
     });
   };
@@ -306,178 +369,98 @@ export function ChatContainer() {
     setActiveRun(null);
   };
 
-  const handleVoiceInputPlaceholder = () => {
-    toast({
-      title: 'Voice input is coming later',
-      description: 'Use the text box for now.',
-      variant: 'info',
-    });
+  const handleVoiceInput = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+    const speechWindow = window as Window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      toast({ title: 'Voice input isn’t supported here', description: 'Try a browser with Web Speech recognition, or type your request.', variant: 'info' });
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = navigator.language || 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.onstart = () => {
+      window.speechSynthesis?.cancel();
+      setIsListening(true);
+    };
+    recognition.onresult = (event: any) => {
+      for (let index = event.resultIndex; index < event.results.length; index++) {
+        const part = event.results[index][0]?.transcript || '';
+        if (event.results[index].isFinal && part.trim()) {
+          setInputValue(current => `${current}${current && !current.endsWith(' ') ? ' ' : ''}${part.trim()}`);
+        }
+      }
+    };
+    recognition.onerror = (event: any) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        toast({ title: 'Microphone access is blocked', description: 'Allow microphone access for this site in your browser, then try again.', variant: 'destructive' });
+      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+        toast({ title: 'Could not recognize speech', description: 'Try again or type your request.', variant: 'destructive' });
+      }
+    };
+    recognition.onend = () => { recognitionRef.current = null; setIsListening(false); };
+    recognitionRef.current = recognition;
+    try { recognition.start(); }
+    catch { recognitionRef.current = null; setIsListening(false); toast({ title: 'Voice input could not start', description: 'Try again or type your request.', variant: 'destructive' }); }
   };
 
-  const executivePresets = process.env.NEXT_PUBLIC_USE_MOCK_API === 'false'
-    ? [
-        'Help me plan my priorities for today',
-        'Draft a concise follow-up email for a meeting',
-        'Help me prepare an agenda for a planning session',
-      ]
-    : [
-        'Check unread emails from Sarah and audit Friday availability',
-        'Generate daily morning executive briefing across Calendar & Gmail',
-        'Review competitor pricing updates via Playwright browser',
-      ];
-
+  const executivePresets = [
+    { title: 'Clear my inbox', detail: 'Summarize my unread emails', prompt: 'Summarize my unread emails and highlight what needs my attention.', icon: Mail },
+    { title: 'Make room for today', detail: 'See what is on my calendar', prompt: 'What meetings are on my calendar today? Help me prepare.', icon: Calendar },
+    { title: 'Draft an email', detail: 'Write a message for me to review', prompt: 'Help me draft an email. First ask me for the recipient, purpose, and tone if I have not provided them. Then give me a subject and email body that I can review and copy. Do not send it.', icon: PenLine },
+    { title: 'Find a little clarity', detail: 'Turn ideas into a plan', prompt: 'Help me plan my priorities for today. Ask me what I need to accomplish.', icon: Sparkles },
+  ];
   return (
-    <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
-      {/* Center Console */}
+    <div className="chat-workspace flex overflow-hidden relative">
       <div className="flex-1 flex flex-col min-w-0 h-full">
-        {/* Sub-bar: Session picker & Controls */}
-        <div className="h-12 px-6 border-b border-slate-800/80 bg-slate-950/40 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <select
-              value={activeConvId}
-              onChange={(e) => setActiveConvId(e.target.value)}
-              className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-500 font-medium"
-            >
-              {conversations.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.title}
-                </option>
-              ))}
-            </select>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleNewConversation}
-              className="text-xs text-slate-400 hover:text-white"
-            >
-              <Plus className="w-3.5 h-3.5 mr-1" />
-              New Session
-            </Button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant={isActivityOpen ? 'secondary' : 'outline'}
-              size="sm"
-              onClick={() => setIsActivityOpen(!isActivityOpen)}
-              className="text-xs"
-            >
-              <Activity className="w-3.5 h-3.5 mr-1.5 text-sky-400" />
-              <span>Activity Panel</span>
-            </Button>
+        <div className="px-4 md:px-8 flex items-center justify-between gap-2 h-12 shrink-0">
+          <select aria-label="Conversation" value={activeConvId} disabled={isStreaming} onChange={e => setActiveConvId(e.target.value)} className="bg-transparent rounded-lg text-xs text-slate-400 max-w-[180px] sm:max-w-[280px] p-2 truncate">
+            {conversations.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" disabled={isStreaming} onClick={handleNewConversation} aria-label="New conversation"><Plus size={16} /><span className="hidden sm:inline">New chat</span></Button>
+            <Button variant="ghost" size="sm" onClick={() => setIsActivityOpen(!isActivityOpen)} aria-label="Toggle activity panel" aria-expanded={isActivityOpen}><Activity size={16} /><span className="hidden sm:inline">Activity</span></Button>
           </div>
         </div>
-
-        {/* Message Feed */}
-        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-4">
-          {messages.length === 0 ? (
-            <div className="max-w-2xl mx-auto py-12 text-center space-y-6">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center mx-auto shadow-xl shadow-sky-500/20 text-white">
-                <Sparkles className="w-7 h-7" />
+        <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-3 sm:py-6 min-h-0">
+          {loadError ? <div role="alert" className="max-w-md mx-auto py-12 text-center"><h2 className="text-lg">Your workspace couldn’t be loaded.</h2><p className="text-sm text-slate-400 mt-2">Check that the local API is running, then try again.</p><Button className="mt-5" onClick={() => window.location.reload()}>Try again</Button></div> : isLoadingMessages ? <div role="status" aria-label="Loading conversation" className="max-w-[760px] mx-auto space-y-5 py-10"><div className="h-5 w-1/3 bg-white/5 rounded animate-pulse" /><div className="h-20 w-3/4 bg-white/5 rounded-2xl animate-pulse" /></div> : messages.length === 0 ? (
+            <motion.div initial={{opacity:0,y:12}} animate={{opacity:1,y:0}} transition={{duration:.4}} className="max-w-[760px] mx-auto flex flex-col items-center justify-center min-h-full py-0 sm:py-12">
+              <motion.div initial={{opacity:0,scale:.9,filter:'blur(4px)'}} animate={{opacity:1,scale:1,filter:'blur(0px)'}} transition={{duration:.6}} className="nexus-clay w-16 h-16 sm:w-20 sm:h-20 rounded-[24px] flex items-center justify-center mb-4 sm:mb-8"><Brand size={48} /></motion.div>
+              <span className="hidden sm:block text-[11px] uppercase tracking-[.2em] text-slate-500 mb-4">A little more headspace</span>
+              <h1 className="text-[30px] sm:text-[44px] font-medium tracking-[-.045em] text-center leading-tight">What can I take off<br className="sm:hidden" /> your mind?</h1>
+              <p className="text-sm sm:text-base text-slate-400 text-center mt-4 max-w-md leading-relaxed">Bring your email, calendar, and ideas together.<br className="hidden sm:block" /> Let’s make space for what matters.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 mt-6 sm:mt-10 w-full">
+                {executivePresets.map(preset => <button key={preset.title} disabled={!activeConvId} onClick={() => handleSendMessage(preset.prompt)} className="nexus-card group grid grid-cols-[24px_1fr] gap-3 sm:block text-left rounded-2xl border border-white/[.07] bg-[#262626] hover:bg-[#2e2e2e] hover:border-white/15 p-4 sm:p-5 transition-all active:scale-[.98] disabled:opacity-50">
+                  <preset.icon size={20} strokeWidth={1.7} className="text-slate-400 sm:mb-4" /><span><span className="text-sm font-medium block">{preset.title}</span><span className="text-xs text-slate-400 mt-1 sm:mt-2 block leading-relaxed">{preset.detail}</span></span>
+                </button>)}
               </div>
-              <div className="space-y-2">
-                <h2 className="text-xl font-bold tracking-tight text-white">
-                  Welcome to NexusAI Chief of Staff
-                </h2>
-                <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-                  Gemini-powered assistant with saved conversations. Gmail, Calendar, Telegram,
-                  browser actions, and approvals are still preview features.
-                </p>
-              </div>
-
-              {/* Quick Prompt Starters */}
-              <div className="space-y-2 pt-4 max-w-lg mx-auto">
-                <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold font-mono">
-                  Suggested Prompts
-                </div>
-                {executivePresets.map((preset, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleSendMessage(preset)}
-                    className="w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/50 hover:bg-slate-800/80 hover:border-slate-700 transition-all text-xs text-slate-300 flex items-center justify-between group"
-                  >
-                    <span>{preset}</span>
-                    <Sparkles className="w-3.5 h-3.5 text-slate-500 group-hover:text-sky-400 shrink-0" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            messages.map((m) => <MessageBubble key={m.id} message={m} />)
-          )}
+            </motion.div>
+          ) : messages.map(m => <MessageBubble key={m.id} message={m} />)}
           <div ref={messagesEndRef} />
         </div>
-
-        {/* Input Bar */}
-        <div className="p-4 bg-slate-950/80 border-t border-slate-800/80 backdrop-blur-md">
-          <div className="max-w-4xl mx-auto space-y-2">
-            <div className="relative rounded-2xl border border-slate-700/80 bg-slate-900/80 shadow-2xl focus-within:border-sky-500/80 focus-within:ring-2 focus-within:ring-sky-500/20 transition-all">
-              <textarea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-                placeholder="Ask NexusAI to plan, draft, or explain something..."
-                rows={2}
-                className="w-full bg-transparent px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 resize-none focus:outline-none"
-              />
-
-              <div className="px-3 pb-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                  <button
-                    type="button"
-                    onClick={handleVoiceInputPlaceholder}
-                    title="Voice input is not available yet"
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-sky-400 hover:bg-slate-800 transition-colors"
-                  >
-                    <Mic className="w-4 h-4" />
-                  </button>
-                  <span className="text-[11px] text-slate-500 hidden sm:inline">
-                    Press <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[10px]">Enter</kbd> to run
-                  </span>
-                </div>
-
+        <div className="px-4 sm:px-8 pb-4 sm:pb-6 pt-2 shrink-0">
+          <div className="max-w-[760px] mx-auto">
+            <div className="rounded-[24px] bg-[#303030] border border-white/[.08] shadow-[0_8px_32px_#00000012] focus-within:border-white/25 transition-colors">
+              <textarea aria-label="Message NexusAI" value={inputValue} onChange={e => setInputValue(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); handleSendMessage(); } }} placeholder="Ask anything, or start with your day…" rows={2} className="w-full bg-transparent px-5 pt-4 pb-2 text-[16px] sm:text-[15px] placeholder:text-slate-500 resize-none focus:outline-none focus-visible:outline-none" />
+              <div className="px-3 pb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {isStreaming ? (
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={handleStopExecution}
-                      className="text-xs"
-                    >
-                      <Square className="w-3.5 h-3.5 mr-1 fill-current" />
-                      Stop Execution
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      onClick={() => handleSendMessage()}
-                      disabled={!inputValue.trim()}
-                      className="text-xs"
-                    >
-                      <span>Execute</span>
-                      <Send className="w-3.5 h-3.5 ml-1.5" />
-                    </Button>
-                  )}
+                  <Button type="button" size="icon" variant="ghost" onClick={handleVoiceInput} disabled={isStreaming} aria-label={isListening ? 'Stop voice input' : 'Start voice input'} aria-pressed={isListening} title={!speechRecognitionAvailable ? 'Voice input is not supported in this browser' : isListening ? 'Stop listening' : 'Speak a message'} className={isListening ? 'text-primary animate-pulse' : 'text-slate-400'}><span className="relative flex"><span aria-hidden="true" className={isListening ? 'absolute inset-0 rounded-full bg-sky-400/20 animate-ping' : 'hidden'} /><span className="relative">{isListening ? <MicOff size={17} /> : <Mic size={17} />}</span></span></Button>
+                  {isListening && <span role="status" aria-live="polite" className="text-xs text-sky-300">Listening… speak now</span>}
+                  <span className="text-xs text-slate-400 flex items-center gap-2"><Sparkles size={14} />Gemini<span className="hidden sm:inline text-slate-600 ml-3">Shift + Enter for a new line</span></span>
                 </div>
+                {isStreaming ? <Button size="icon" variant="secondary" onClick={handleStopExecution} aria-label="Stop response" className="rounded-full"><Square size={14} fill="currentColor" /></Button> : <Button size="icon" onClick={() => handleSendMessage()} disabled={!inputValue.trim() || !activeConvId} aria-label="Send message" className="rounded-full"><ArrowUp size={18} /></Button>}
               </div>
             </div>
+            <p className="text-center text-[11px] text-slate-500 mt-3">NexusAI can make mistakes. Review important details.</p>
           </div>
         </div>
       </div>
-
-      {/* Embedded Activity Panel */}
-      <ActivityDrawer
-        run={activeRun}
-        isOpen={isActivityOpen}
-        onToggle={() => setIsActivityOpen(!isActivityOpen)}
-      />
+      <ActivityDrawer run={activeRun} isOpen={isActivityOpen} onToggle={() => setIsActivityOpen(!isActivityOpen)} />
     </div>
   );
 }

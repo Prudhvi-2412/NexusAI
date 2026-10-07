@@ -1,6 +1,8 @@
 export type IntegrationType =
   | 'gmail'
   | 'google_calendar'
+  | 'google_classroom'
+  | 'google_contacts'
   | 'telegram'
   | 'browser_playwright'
   | 'slack'

@@ -25,7 +25,7 @@ export function ActivityDrawer({ run, isOpen, onToggle }: ActivityDrawerProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="w-80 lg:w-96 shrink-0 border-l border-slate-800/80 bg-slate-950/80 backdrop-blur-xl flex flex-col h-full overflow-hidden text-xs">
+    <div role="region" aria-label="Response activity" className="fixed z-30 inset-y-16 right-0 w-[min(360px,100vw)] md:relative md:inset-auto md:w-80 shrink-0 border-l border-slate-800 bg-[#242424] flex flex-col h-[calc(100dvh-8rem)] md:h-full overflow-hidden text-xs shadow-2xl md:shadow-none">
       {/* Header */}
       <div className="p-4 border-b border-slate-800/80 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -119,6 +119,7 @@ export function ActivityDrawer({ run, isOpen, onToggle }: ActivityDrawerProps) {
                       <p className="text-[11px] text-slate-400 font-sans leading-relaxed">
                         {step.summary}
                       </p>
+                      <p className="mt-1 text-[10px] text-sky-400/80">{step.agentName}</p>
 
                       {/* Tool Call Sub-badge */}
                       {step.toolCall && (

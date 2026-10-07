@@ -61,8 +61,8 @@ export function ApprovalsView() {
         title: actionType === 'approve' ? 'Action Approved' : 'Action Rejected',
         description:
           actionType === 'approve'
-            ? 'Execution resumed. MCP tool will be dispatched to external target.'
-            : 'Supervisor notified of human rejection. Replanning alternative path.',
+            ? (selectedApproval.actionPayload.action === 'run_scheduled_task' ? 'The saved read-only assistant run has been started.' : selectedApproval.actionPayload.action === 'gmail_draft' ? (updated.decisionNotes || 'Gmail draft saved. NexusAI did not send it.') : selectedApproval.actionPayload.action === 'mcp_tool' ? (updated.decisionNotes || 'The approved connector action was processed.') : 'The decision was recorded.')
+            : 'The request was declined and the decision was recorded.',
         variant: actionType === 'approve' ? 'success' : 'default',
       });
       setSelectedApproval(null);
@@ -112,16 +112,16 @@ export function ApprovalsView() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="workspace-page space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
             <ShieldAlert className="w-5 h-5 text-amber-400" />
-            <span>Human-in-the-Loop Approval Center</span>
+            <span>You’re in control.</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Review, audit, approve, or reject high-impact agent tool calls before external mutation.
+            Review scheduled runs and connector actions. Connector writes remain paused until you approve the exact request.
           </p>
         </div>
 
@@ -289,8 +289,8 @@ export function ApprovalsView() {
           title={actionType === 'approve' ? 'Authorize Agent Action' : 'Reject Agent Action'}
           description={
             actionType === 'approve'
-              ? 'This action will be transmitted to the real-world MCP server endpoint.'
-              : 'The supervisor will receive your feedback and alter its execution plan.'
+              ? (selectedApproval.actionPayload.action === 'run_scheduled_task' ? 'Approving starts this saved read-only assistant run now.' : selectedApproval.actionPayload.action === 'gmail_draft' ? 'Approving saves the exact message to your Gmail Drafts folder. NexusAI will not send it.' : selectedApproval.actionPayload.action === 'mcp_tool' ? 'Approving resumes the paused workflow and runs this configured connector tool once.' : 'This records your approval for the requested action.')
+              : 'This records that you declined the request.'
           }
           maxWidth="md"
         >

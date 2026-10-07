@@ -7,7 +7,11 @@ import {
   Conversation,
   CreateTaskPayload,
   Memory,
+  MemorySuggestion,
   MemorySearchParams,
+  MCPServer,
+  MCPServerInput,
+  MCPServerTestResult,
   Message,
   ObservabilityRun,
   ScheduledTask,
@@ -30,8 +34,7 @@ import { simulateAgentStream, StreamListener } from './sse-simulator';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== 'false';
-// These panels are still design previews. Only conversations and chat use the real API.
-const USE_PREVIEW_DASHBOARDS = true;
+const apiFetch: typeof fetch = (input, init = {}) => fetch(input, { ...init, credentials: 'include' });
 
 // Stateful in-memory stores for interactive mock experience
 let conversationsStore = [...MOCK_CONVERSATIONS];
@@ -45,8 +48,8 @@ let settingsStore = { ...MOCK_SETTINGS };
 export const api = {
   // --- Agents ---
   async getAgents(): Promise<Agent[]> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return MOCK_AGENTS;
-    const res = await fetch(`${API_BASE_URL}/agents`);
+    if (USE_MOCK) return MOCK_AGENTS;
+    const res = await apiFetch(`${API_BASE_URL}/agents`);
     if (!res.ok) throw new Error('Failed to fetch agents');
     return res.json();
   },
@@ -54,7 +57,7 @@ export const api = {
   // --- Conversations & Messages ---
   async getConversations(): Promise<Conversation[]> {
     if (USE_MOCK) return [...conversationsStore];
-    const res = await fetch(`${API_BASE_URL}/conversations`);
+    const res = await apiFetch(`${API_BASE_URL}/conversations`);
     if (!res.ok) throw new Error('Failed to fetch conversations');
     return res.json();
   },
@@ -72,7 +75,7 @@ export const api = {
       conversationsStore.unshift(newConv);
       return newConv;
     }
-    const res = await fetch(`${API_BASE_URL}/conversations`, {
+    const res = await apiFetch(`${API_BASE_URL}/conversations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title }),
@@ -85,7 +88,7 @@ export const api = {
     if (USE_MOCK) {
       return messagesStore.filter((m) => m.conversationId === conversationId);
     }
-    const res = await fetch(`${API_BASE_URL}/conversations/${conversationId}/messages`);
+    const res = await apiFetch(`${API_BASE_URL}/conversations/${conversationId}/messages`);
     if (!res.ok) throw new Error('Failed to fetch messages');
     return res.json();
   },
@@ -114,7 +117,7 @@ export const api = {
       }
       return fullMsg;
     }
-    const res = await fetch(`${API_BASE_URL}/conversations/${fullMsg.conversationId}/messages`, {
+    const res = await apiFetch(`${API_BASE_URL}/conversations/${fullMsg.conversationId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(fullMsg),
@@ -128,10 +131,11 @@ export const api = {
     message: string,
     conversationId: string,
     callbacks: StreamListener,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    resumeRunId?: string,
   ): () => void {
     if (USE_MOCK) {
-      return simulateAgentStream(message, callbacks, abortSignal);
+      return simulateAgentStream(resumeRunId ? `Resume ${resumeRunId}` : message, callbacks, abortSignal);
     }
 
     let isAborted = false;
@@ -146,10 +150,10 @@ export const api = {
 
     async function startStream() {
       try {
-        const response = await fetch(`${API_BASE_URL}/agent/stream`, {
+        const response = await apiFetch(resumeRunId ? `${API_BASE_URL}/agent/runs/${resumeRunId}/resume` : `${API_BASE_URL}/agent/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, conversationId }),
+          body: resumeRunId ? undefined : JSON.stringify({ message, conversationId }),
           signal: controller.signal,
         });
 
@@ -206,9 +210,13 @@ export const api = {
     };
   },
 
+  resumeAgentRun(runId: string, callbacks: StreamListener, abortSignal?: AbortSignal): () => void {
+    return this.streamAgentRun('', '', callbacks, abortSignal, runId);
+  },
+
   // --- Long-Term Memory ---
   async getMemories(params?: MemorySearchParams): Promise<Memory[]> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       let filtered = [...memoriesStore];
       if (params?.category && params.category !== 'all') {
         filtered = filtered.filter((m) => m.category === params.category);
@@ -227,13 +235,13 @@ export const api = {
     const searchParams = new URLSearchParams();
     if (params?.query) searchParams.set('query', params.query);
     if (params?.category) searchParams.set('category', params.category);
-    const res = await fetch(`${API_BASE_URL}/memories?${searchParams.toString()}`);
+    const res = await apiFetch(`${API_BASE_URL}/memories?${searchParams.toString()}`);
     if (!res.ok) throw new Error('Failed to fetch memories');
     return res.json();
   },
 
   async createMemory(memory: Partial<Memory>): Promise<Memory> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       const newMemory: Memory = {
         id: `mem_${Date.now()}`,
         category: memory.category || 'semantic',
@@ -252,7 +260,7 @@ export const api = {
       memoriesStore.unshift(newMemory);
       return newMemory;
     }
-    const res = await fetch(`${API_BASE_URL}/memories`, {
+    const res = await apiFetch(`${API_BASE_URL}/memories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(memory),
@@ -262,24 +270,48 @@ export const api = {
   },
 
   async deleteMemory(memoryId: string): Promise<boolean> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       memoriesStore = memoriesStore.filter((m) => m.id !== memoryId);
       return true;
     }
-    const res = await fetch(`${API_BASE_URL}/memories/${memoryId}`, { method: 'DELETE' });
+    const res = await apiFetch(`${API_BASE_URL}/memories/${memoryId}`, { method: 'DELETE' });
     return res.ok;
+  },
+
+  async getMemorySuggestions(): Promise<MemorySuggestion[]> {
+    if (USE_MOCK) return [];
+    const res = await apiFetch(`${API_BASE_URL}/memory-suggestions`);
+    if (!res.ok) throw new Error('Failed to fetch memory suggestions');
+    return res.json();
+  },
+
+  async decideMemorySuggestion(suggestionId: string, payload: {
+    decision: 'approve' | 'reject';
+    title?: string;
+    content?: string;
+    category?: MemorySuggestion['category'];
+    tags?: string[];
+  }): Promise<{ status: 'approved' | 'rejected'; memory?: Memory }> {
+    if (USE_MOCK) throw new Error('Memory review is unavailable in demo mode');
+    const res = await apiFetch(`${API_BASE_URL}/memory-suggestions/${suggestionId}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error('Failed to update memory suggestion');
+    return res.json();
   },
 
   // --- Scheduled & Background Tasks ---
   async getTasks(): Promise<ScheduledTask[]> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return [...tasksStore];
-    const res = await fetch(`${API_BASE_URL}/tasks`);
+    if (USE_MOCK) return [...tasksStore];
+    const res = await apiFetch(`${API_BASE_URL}/tasks`);
     if (!res.ok) throw new Error('Failed to fetch tasks');
     return res.json();
   },
 
   async createTask(payload: CreateTaskPayload): Promise<ScheduledTask> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       const newTask: ScheduledTask = {
         id: `task_${Date.now()}`,
         title: payload.title,
@@ -305,7 +337,7 @@ export const api = {
       tasksStore.unshift(newTask);
       return newTask;
     }
-    const res = await fetch(`${API_BASE_URL}/tasks`, {
+    const res = await apiFetch(`${API_BASE_URL}/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -315,7 +347,7 @@ export const api = {
   },
 
   async toggleTask(taskId: string, enabled: boolean): Promise<ScheduledTask | undefined> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       const task = tasksStore.find((t) => t.id === taskId);
       if (task) {
         task.enabled = enabled;
@@ -324,7 +356,7 @@ export const api = {
       }
       return task;
     }
-    const res = await fetch(`${API_BASE_URL}/tasks/${taskId}/toggle`, {
+    const res = await apiFetch(`${API_BASE_URL}/tasks/${taskId}/toggle`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
@@ -334,24 +366,29 @@ export const api = {
   },
 
   async deleteTask(taskId: string): Promise<boolean> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       tasksStore = tasksStore.filter((t) => t.id !== taskId);
       return true;
     }
-    const res = await fetch(`${API_BASE_URL}/tasks/${taskId}`, { method: 'DELETE' });
+    const res = await apiFetch(`${API_BASE_URL}/tasks/${taskId}`, { method: 'DELETE' });
     return res.ok;
   },
 
+  async runTaskNow(taskId: string): Promise<{ success: boolean; approvalRequired?: boolean; error?: string }> {
+    const res = await apiFetch(`${API_BASE_URL}/tasks/${taskId}/run`, { method: 'POST' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Could not run task');
+    return res.json();
+  },
   // --- Human Approval Center ---
   async getApprovals(): Promise<ApprovalRequest[]> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return [...approvalsStore];
-    const res = await fetch(`${API_BASE_URL}/approvals`);
+    if (USE_MOCK) return [...approvalsStore];
+    const res = await apiFetch(`${API_BASE_URL}/approvals`);
     if (!res.ok) throw new Error('Failed to fetch approvals');
     return res.json();
   },
 
   async submitApprovalDecision(payload: ApprovalDecisionPayload): Promise<ApprovalRequest> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       const approval = approvalsStore.find((a) => a.id === payload.requestId);
       if (approval) {
         approval.status = payload.decision === 'approve' ? 'approved' : 'rejected';
@@ -361,7 +398,7 @@ export const api = {
       }
       return approval || approvalsStore[0];
     }
-    const res = await fetch(`${API_BASE_URL}/approvals/${payload.requestId}/decision`, {
+    const res = await apiFetch(`${API_BASE_URL}/approvals/${payload.requestId}/decision`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -373,7 +410,7 @@ export const api = {
   // --- Connected Apps & Integrations ---
   async getIntegrations(): Promise<ConnectedApp[]> {
     if (USE_MOCK) return [...integrationsStore];
-    const res = await fetch(`${API_BASE_URL}/integrations`);
+    const res = await apiFetch(`${API_BASE_URL}/integrations`);
     if (!res.ok) throw new Error('Failed to fetch integrations');
     return res.json();
   },
@@ -387,51 +424,105 @@ export const api = {
       }
       return { connected: true };
     }
-    const res = await fetch(`${API_BASE_URL}/integrations/${appId}/connect`, { method: 'POST' });
+    const res = await apiFetch(`${API_BASE_URL}/integrations/${appId}/connect`, { method: 'POST' });
     if (!res.ok) throw new Error((await res.json()).detail || 'Could not start Google connection');
     return res.json();
   },
 
   async disconnectIntegration(appId: string): Promise<void> {
     if (USE_MOCK) return;
-    const res = await fetch(`${API_BASE_URL}/integrations/${appId}/disconnect`, { method: 'POST' });
+    const res = await apiFetch(`${API_BASE_URL}/integrations/${appId}/disconnect`, { method: 'POST' });
     if (!res.ok) throw new Error('Could not disconnect Google');
+  },
+
+  async createTelegramLink(): Promise<{ code: string; command: string; expiresInSeconds: number }> {
+    const res = await apiFetch(`${API_BASE_URL}/telegram/link`, { method: 'POST' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Could not create a Telegram link code');
+    return res.json();
+  },
+
+  async unlinkTelegram(): Promise<void> {
+    const res = await apiFetch(`${API_BASE_URL}/telegram/link`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Could not unlink Telegram');
   },
 
   // --- Observability & Runs ---
   async getObservabilityRuns(): Promise<ObservabilityRun[]> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return [...MOCK_OBSERVABILITY_RUNS];
-    const res = await fetch(`${API_BASE_URL}/observability/runs`);
+    if (USE_MOCK) return [...MOCK_OBSERVABILITY_RUNS];
+    const res = await apiFetch(`${API_BASE_URL}/observability/runs`);
     if (!res.ok) throw new Error('Failed to fetch runs');
     return res.json();
   },
 
   async getSystemHealth(): Promise<SystemHealthSummary> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return { ...MOCK_SYSTEM_HEALTH };
-    const res = await fetch(`${API_BASE_URL}/observability/stats`);
+    if (USE_MOCK) return { ...MOCK_SYSTEM_HEALTH };
+    const res = await apiFetch(`${API_BASE_URL}/observability/stats`);
     if (!res.ok) throw new Error('Failed to fetch health metrics');
     return res.json();
   },
 
+  async getActivityRuns(): Promise<AgentRun[]> {
+    if (USE_MOCK) return [];
+    const res = await apiFetch(`${API_BASE_URL}/activity/runs`);
+    if (!res.ok) throw new Error('Failed to fetch activity runs');
+    return res.json();
+  },
   // --- Settings ---
   async getSettings(): Promise<SystemSettings> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) return { ...settingsStore };
-    const res = await fetch(`${API_BASE_URL}/settings`);
+    if (USE_MOCK) return { ...settingsStore };
+    const res = await apiFetch(`${API_BASE_URL}/settings`);
     if (!res.ok) throw new Error('Failed to fetch settings');
     return res.json();
   },
 
   async updateSettings(settings: Partial<SystemSettings>): Promise<SystemSettings> {
-    if (USE_MOCK || USE_PREVIEW_DASHBOARDS) {
+    if (USE_MOCK) {
       settingsStore = { ...settingsStore, ...settings };
       return settingsStore;
     }
-    const res = await fetch(`${API_BASE_URL}/settings`, {
+    const res = await apiFetch(`${API_BASE_URL}/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
     if (!res.ok) throw new Error('Failed to update settings');
     return res.json();
+  },
+
+  async getMcpServers(): Promise<MCPServer[]> {
+    if (USE_MOCK) return [];
+    const res = await apiFetch(`${API_BASE_URL}/mcp/servers`);
+    if (!res.ok) throw new Error('Could not load MCP connectors');
+    return res.json();
+  },
+
+  async saveMcpServer(payload: MCPServerInput, serverId?: string): Promise<MCPServer> {
+    if (USE_MOCK) throw new Error('MCP connectors are unavailable in demo mode');
+    const res = await apiFetch(serverId ? `${API_BASE_URL}/mcp/servers/${serverId}` : `${API_BASE_URL}/mcp/servers`, {
+      method: serverId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'Could not save MCP connector');
+    }
+    return res.json();
+  },
+
+  async testMcpServer(serverId: string): Promise<MCPServerTestResult> {
+    if (USE_MOCK) throw new Error('MCP connectors are unavailable in demo mode');
+    const res = await apiFetch(`${API_BASE_URL}/mcp/servers/${serverId}/test`, { method: 'POST' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'Could not connect to MCP server');
+    }
+    return res.json();
+  },
+
+  async deleteMcpServer(serverId: string): Promise<void> {
+    if (USE_MOCK) throw new Error('MCP connectors are unavailable in demo mode');
+    const res = await apiFetch(`${API_BASE_URL}/mcp/servers/${serverId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Could not delete MCP connector');
   },
 };

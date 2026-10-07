@@ -1,5 +1,7 @@
 # NexusAI Memory Architecture
 
+> **Implementation status (2026-10-07):** The live implementation uses an owner-scoped PostgreSQL `memories` table with JSON tags/metadata and optional `vector(768)` Gemini embeddings. Chat retrieves up to five matching records with in-process cosine/keyword ranking. After a successful, non-paused exchange, Gemini may propose up to three durable user facts or preferences. Candidates are stored separately in `memory_suggestions`, scoped to the signed-in owner, and shown on the Memory page for editing, approval, or dismissal. Nothing becomes a saved memory until the user approves it. Extraction skips exchanges that visibly contain credentials, direct email addresses, or long numeric identifiers and instructs Gemini to exclude sensitive data. Suggestions expire from the pending list after 30 days. Redis caching, HNSW/full-text indexes, and procedural workflows below remain target-design items.
+
 This document specifies the persistent memory architecture for NexusAI, implementing a hybrid semantic, episodic, preference, and procedural storage tier using **PostgreSQL + pgvector** and **Redis**.
 
 ---
@@ -93,8 +95,9 @@ Redis 7.2 maintains volatile and high-speed operational data:
 
 ## 5. Memory Curation & Distillation Pipeline
 
-At the conclusion of each agent run:
-1. **Background Job**: The `MemoryCurator` evaluates conversation exchanges.
-2. **Extraction**: Detects if new facts, rules, or preferences were stated (e.g., "From now on, BCC my assistant on client emails").
-3. **Deduplication**: Queries existing memories with similarity threshold > 0.88. If a match is found, it updates the existing record rather than creating a duplicate.
-4. **User Verification**: High-impact rules can be marked `verified_by_user = false` until confirmed via the web UI Memory page.
+After a successful chat run (runs waiting for action approval are skipped):
+1. **Candidate extraction**: Gemini receives the latest user and assistant exchange plus existing memories, and may return up to three durable facts or preferences. The extraction prompt treats the exchange as untrusted data and excludes transient requests, assistant claims, secrets, direct contact information, and sensitive personal data.
+2. **Duplicate filtering**: Exact title/content matches are discarded. Semantic deduplication and updating existing memories are not implemented yet.
+3. **Pending review**: Candidates are stored in `memory_suggestions` with the authenticated owner and conversation ID. They remain pending and visible for 30 days.
+4. **User decision**: The Memory page allows title/content edits. Approving creates a user-verified `memories` record with an embedding when available; dismissing removes the candidate from the pending list. Every list and decision query is scoped to the authenticated owner.
+5. **No silent writes**: Extraction never writes directly into the durable `memories` table. Candidates are not injected into future chat context until approved.

@@ -31,14 +31,23 @@ export function TasksView() {
   // Form state
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
-  const [newAgentId, setNewAgentId] = useState('agent_supervisor');
   const [newCron, setNewCron] = useState('0 8 * * 1-5');
   const [newPriority, setNewPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('high');
   const [newApproval, setNewApproval] = useState(false);
 
   useEffect(() => {
-    api.getTasks().then(setTasks);
+    api.getTasks().then(setTasks).catch((error) => toast({ title: 'Could not load tasks', description: error.message, variant: 'destructive' }));
   }, []);
+
+  const handleRunNow = async (task: ScheduledTask) => {
+    try {
+      const result = await api.runTaskNow(task.id);
+      toast({ title: result.approvalRequired ? 'Approval requested' : result.success ? 'Task completed' : 'Task failed', description: result.approvalRequired ? 'Review it in Approvals before the assistant runs.' : result.success ? 'The result is recorded in Activity.' : result.error || 'Check Activity for details.', variant: result.success ? 'success' : result.approvalRequired ? 'default' : 'destructive' });
+      setTasks(await api.getTasks());
+    } catch (error) {
+      toast({ title: 'Could not run task', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
+    }
+  };
 
   const handleToggleTask = async (task: ScheduledTask) => {
     const updated = await api.toggleTask(task.id, !task.enabled);
@@ -70,7 +79,7 @@ export function TasksView() {
       const created = await api.createTask({
         title: newTitle,
         description: newDescription,
-        assignedAgentId: newAgentId,
+        assignedAgentId: 'agent_supervisor',
         cronExpression: newCron,
         priority: newPriority,
         requiresHumanApproval: newApproval,
@@ -115,16 +124,16 @@ export function TasksView() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="workspace-page space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
             <CalendarCheck className="w-5 h-5 text-sky-400" />
-            <span>Autonomous Tasks & Scheduled Cron</span>
+            <span>A plan for what’s next.</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Background workers, recurring routines, and event-driven autonomous tasks.
+            Schedule recurring read-only assistant runs. Times use your profile timezone.
           </p>
         </div>
 
@@ -135,7 +144,7 @@ export function TasksView() {
           className="text-xs"
         >
           <Plus className="w-3.5 h-3.5 mr-1.5" />
-          Create Scheduled Task
+          New task
         </Button>
       </div>
 
@@ -204,9 +213,9 @@ export function TasksView() {
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5 text-slate-500" />
-                      Next: {new Date(task.schedule.nextExecutionTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}
+                      Next: {new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric', timeZone: task.schedule.timezone }).format(new Date(task.schedule.nextExecutionTime))} ({task.schedule.timezone})
                     </span>
-                    {task.targetMcpServers && (
+                    {!!task.targetMcpServers?.length && (
                       <span className="text-slate-500">
                         MCP: {task.targetMcpServers.join(', ')}
                       </span>
@@ -237,13 +246,7 @@ export function TasksView() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => {
-                      toast({
-                        title: 'Dispatched Immediate Run',
-                        description: `Worker spawned for "${task.title}".`,
-                        variant: 'info',
-                      });
-                    }}
+                    onClick={() => void handleRunNow(task)}
                     className="text-xs"
                   >
                     <Play className="w-3.5 h-3.5 mr-1 text-sky-400" />
@@ -269,7 +272,7 @@ export function TasksView() {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         title="Schedule Autonomous Task"
-        description="Register an autonomous routine to be dispatched by Celery / APScheduler."
+        description="Create a recurring assistant run. Scheduled directives are read-only."
         maxWidth="lg"
       >
         <form onSubmit={handleCreateTask} className="space-y-4 text-xs">
@@ -298,18 +301,9 @@ export function TasksView() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-300 font-semibold mb-1">Assigned Agent</label>
-              <select
-                value={newAgentId}
-                onChange={(e) => setNewAgentId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-sky-500"
-              >
-                <option value="agent_supervisor">Nexus Supervisor (Coordinator)</option>
-                <option value="agent_comms">Comms Agent (Email & Telegram)</option>
-                <option value="agent_calendar">Calendar Agent (Scheduling)</option>
-                <option value="agent_browser">Browser Agent (Playwright)</option>
-              </select>
+                      <div>
+              <label className="block text-slate-300 font-semibold mb-1">Assistant</label>
+              <div className="w-full rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-slate-300">Nexus Supervisor</div>
             </div>
 
             <div>
@@ -349,7 +343,7 @@ export function TasksView() {
                 className="w-4 h-4 rounded bg-slate-950 border-slate-800 text-sky-500 focus:ring-sky-500"
               />
               <label htmlFor="approval_chk" className="text-slate-300 cursor-pointer">
-                Require human approval before external mutations
+                Ask me to approve each scheduled run
               </label>
             </div>
           </div>

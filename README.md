@@ -1,24 +1,36 @@
 # NexusAI: Autonomous AI Chief of Staff & Agentic OS
 
+GitHub setup, least-privilege permissions, and test prompts are documented in [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
+
 ## Current implementation
 
-The web chat now connects to a FastAPI service with persisted conversations and
-Gemini streaming with a fallback model. Optional read-only Gmail and Calendar access is available
-through Google OAuth. Telegram, browser automation, memory, tasks,
-approvals, and observability screens remain **interactive previews** and do not
-perform real external actions. The older architecture sections below describe the
+The web chat connects to FastAPI with persisted, account-scoped conversations,
+Gemini streaming, and verified Google sign-in. Each account has its own memories
+and encrypted Google and GitHub credentials. Gmail, Calendar, Classroom, and
+Contacts are connected by each user through Google OAuth. GitHub uses a per-user
+GitHub App authorization for read-only repositories, issues, pull requests, and
+Actions workflow runs. A shared Telegram bot supports private chats after a user
+links their Telegram ID with a short-lived code.
+Browser automation, tasks, approvals, and observability screens remain
+**interactive previews**. The older architecture sections below describe the
 target design, not implemented backend features.
 
 ### Run locally
 
-1. Copy `docker/.env.docker.example` to `docker/.env` and set `GEMINI_API_KEY`.
+1. Copy `docker/.env.docker.example` to `docker/.env` and set `DATABASE_URL`,
+   `GEMINI_API_KEY`, the Google OAuth values, `GOOGLE_AUTH_ALLOWED_EMAIL` (the
+   original owner used to backfill existing records and limit deployment-wide
+   MCP tools), and a random `SESSION_SECRET` (for example, generate one with
+   `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
 2. From the repository root, run `docker compose --env-file docker/.env -f docker/docker-compose.yml up --build`.
 3. Open `http://localhost:3000`. The API health endpoint is `http://localhost:8000/health`.
 
-The Compose ports bind to your own machine. This development slice has no user
-authentication; do not expose it to the public internet. Conversations are stored
-in the local PostgreSQL volume. Without a Gemini key, chat returns a clear
-configuration error rather than a simulated answer.
+The Compose ports bind to your own machine. The API requires a Google session
+before serving workspace routes. Neon is used when its connection URL is set in
+`DATABASE_URL`; the bundled PostgreSQL service is optional (`--profile local-db`).
+The first boot creates the app schema in the selected database. It does not copy
+conversation data from an existing local database. Without a Gemini key, chat
+returns a clear configuration error rather than a simulated answer.
 The default chat model is `gemini-3.6-flash`, with `gemini-3.5-flash-lite` as a
 fallback when Google reports temporary capacity errors.
 
@@ -34,7 +46,7 @@ Then restart Compose, open **Connected Apps**, and connect Google. The app asks
 only for Gmail read-only and Calendar events read-only scopes. The key encrypts
 the saved refresh token; keep it stable and private. The chat can then summarize
 up to 10 unread messages and events in the next 24 hours when requested. These
-Google calls currently use a direct API adapter; an MCP gateway is future work.
+Google calls currently use account-scoped direct API adapters. NexusAI also supports account-owned remote MCP connectors from Settings; operator-managed MCP servers can still be configured in the API environment.
 
 > **Phase 1: Monorepo Foundation & Frontend Command Center**  
 > Built for developer-grade autonomous agent orchestration, Model Context Protocol (MCP) ecosystems, and human-in-the-loop governance.
@@ -49,14 +61,14 @@ In this foundational phase, we have established:
 1. **Production Monorepo Structure**: Full package isolation with `@nexusai/types`, `@nexusai/ui`, `@nexusai/config`, and `apps/web`.
 2. **Next.js 14 Web Command Center**: A sleek, dark-mode, developer-centric dashboard designed specifically as an AI command center and observability portal (not a generic chatbot demo).
 3. **8 Feature-Complete Interfaces**:
-   - **Agent Console (Main Chat)**: Multi-agent message stream, safe progress reasoning accordion without leaking hidden chain-of-thought, tool execution indicators, voice input placeholder, stop/cancel controls, and quick prompt presets.
+   - **Agent Console (Main Chat)**: Multi-agent message stream, safe progress summaries without hidden chain-of-thought, tool execution indicators, browser speech recognition with transcript review, spoken assistant replies, stop/cancel controls, and quick prompt presets.
    - **Live Agent Activity Panel**: Real-time orchestration hierarchy, active task summaries, and step-by-step tool timeline.
-   - **Connected Apps (MCP Integrations)**: Cards for Gmail, Google Calendar, Telegram, Playwright Browser, Slack, and Notion with live connection states, scope permissions, and custom MCP registration.
+   - **Connected Apps**: Google, Telegram, and GitHub connections with live account-specific states. Add account-owned custom MCP endpoints from Settings → MCP connectors.
    - **Memory Bank (pgvector)**: Filterable long-term memory across Semantic facts, Preferences & Rules, Episodic recaps, and Procedural SOPs with confidence metrics and search.
    - **Tasks & Scheduled Cron**: Autonomous background routines with cron syntax, interval triggers, priority badges, enable/disable toggles, and creation modal.
    - **Approval Center (Human-in-the-Loop)**: Staged external actions requiring human authorization (Send email, Reschedule calendar, Post message, Browser form submit) with parameter diff viewers and approve/reject feedback loops.
    - **Agent Runs & Observability**: Token economics, cost estimates, P95 latency breakdowns (Planning vs Tool Execution vs Model Inference), error tracking, and full run inspection.
-   - **Settings & Guardrails**: Preview controls for autonomy, tool gating, model selection, profile, and alerts.
+   - **Settings & Guardrails**: Account profile, Gemini generation controls, guardrails, alerts, and encrypted account-owned MCP connectors.
 4. **Resilient Service Abstraction (`lib/api/client.ts`)**: Single-point switch between **Mock Mode** (with real-time simulated SSE stream, tool calls, and stateful memory updates) and real **FastAPI Backend**.
 5. **Architectural Blueprints & Hand-off Docs**: Mermaid flowcharts, REST & SSE contracts, MCP specifications, pgvector memory schemas, and a step-by-step backend roadmap for Codex.
 
