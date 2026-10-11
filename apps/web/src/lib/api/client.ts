@@ -55,6 +55,21 @@ export const api = {
   },
 
   // --- Conversations & Messages ---
+  async getWorkspaceBootstrap(): Promise<{ conversations: Conversation[]; messages: Message[] }> {
+    if (USE_MOCK) {
+      const conversations = [...conversationsStore];
+      return {
+        conversations,
+        messages: conversations[0]
+          ? messagesStore.filter((message) => message.conversationId === conversations[0].id)
+          : [],
+      };
+    }
+    const res = await apiFetch(`${API_BASE_URL}/workspace/bootstrap`);
+    if (!res.ok) throw new Error('Failed to load workspace');
+    return res.json();
+  },
+
   async getConversations(): Promise<Conversation[]> {
     if (USE_MOCK) return [...conversationsStore];
     const res = await apiFetch(`${API_BASE_URL}/conversations`);
@@ -306,7 +321,7 @@ export const api = {
   async getTasks(): Promise<ScheduledTask[]> {
     if (USE_MOCK) return [...tasksStore];
     const res = await apiFetch(`${API_BASE_URL}/tasks`);
-    if (!res.ok) throw new Error('Failed to fetch tasks');
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Failed to fetch tasks');
     return res.json();
   },
 
@@ -342,7 +357,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error('Failed to create task');
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Failed to create task');
     return res.json();
   },
 
@@ -361,7 +376,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     });
-    if (!res.ok) throw new Error('Failed to toggle task');
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Failed to toggle task');
     return res.json();
   },
 
@@ -371,6 +386,7 @@ export const api = {
       return true;
     }
     const res = await apiFetch(`${API_BASE_URL}/tasks/${taskId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Failed to delete task');
     return res.ok;
   },
 
@@ -403,7 +419,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error('Failed to submit approval');
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || 'Failed to submit approval');
     return res.json();
   },
 

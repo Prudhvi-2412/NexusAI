@@ -23,6 +23,8 @@ import {
   Terminal,
   RefreshCw,
   Github,
+  Linkedin,
+  Instagram,
 } from 'lucide-react';
 import { toast } from '@/lib/hooks/use-toast';
 import { ConnectionAnimation } from '@/components/shared/connection-animation';
@@ -62,7 +64,7 @@ export function AppsView() {
   }, [selectedApp?.type, telegramLink]);
 
   const handleToggleConnect = async (app: ConnectedApp) => {
-    if (app.type === 'telegram') {
+    if (app.type === 'telegram' || app.type === 'browser_playwright') {
       setSelectedApp(app);
       setTelegramLink(null);
       return;
@@ -115,6 +117,10 @@ export function AppsView() {
         return <BookOpen className="w-6 h-6 text-slate-300" />;
       case 'github':
         return <Github className="w-6 h-6 text-slate-200" />;
+      case 'linkedin':
+        return <Linkedin className="w-6 h-6 text-sky-400" />;
+      case 'instagram':
+        return <Instagram className="w-6 h-6 text-pink-400" />;
       default:
         return <Terminal className="w-6 h-6 text-sky-400" />;
     }
@@ -129,7 +135,7 @@ export function AppsView() {
             <span>Your world, connected.</span>
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Give NexusAI the context to help. Gmail drafts pause for your approval and are never sent by NexusAI; other Google and GitHub actions stay read-only.
+            Give NexusAI the context to help. Gmail drafts, LinkedIn posts, Instagram replies, and browser actions pause for your approval; other connected data stays read-only.
           </p>
         </div>
 
@@ -151,7 +157,7 @@ export function AppsView() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {apps.map((app) => {
           const isConnected = app.status === 'connected';
-          const environmentManaged = process.env.NEXT_PUBLIC_USE_MOCK_API === 'false' && app.type === 'telegram';
+          const environmentManaged = process.env.NEXT_PUBLIC_USE_MOCK_API === 'false' && (app.type === 'telegram' || app.type === 'browser_playwright');
 
           return (
             <Card
@@ -183,10 +189,11 @@ export function AppsView() {
                   <div className="text-[10px] text-slate-500 uppercase tracking-wider">
                     Connection
                   </div>
-                  <div className="text-slate-300">{environmentManaged
+                  <div className="text-slate-300">{app.type === 'browser_playwright' ? 'Isolated public-site browser; no account cookies stored' : environmentManaged
                     ? isConnected ? 'Linked to your NexusAI account' : 'Shared bot is ready for account linking'
-                    : isConnected ? (app.id === 'app_gmail' ? 'Read access and approval-gated drafts enabled' : 'Read-only access enabled') : 'Ready to connect'}</div>
-                  {environmentManaged && !isConnected && <div className="text-[10px] text-slate-500">Create an expiring link code to connect your Telegram account.</div>}
+                    : isConnected ? (app.id === 'app_gmail' ? 'Read access and approval-gated drafts enabled' : app.id === 'app_linkedin' ? 'Profile access and approval-gated posting enabled' : app.id === 'app_instagram' ? 'Professional profile and approval-gated inbox replies enabled' : 'Read-only access enabled') : 'Ready to connect'}</div>
+                  {app.type === 'browser_playwright' && <div className="text-[10px] text-slate-500">Writes require your approval in Approvals.</div>}
+                  {environmentManaged && app.type === 'telegram' && !isConnected && <div className="text-[10px] text-slate-500">Create an expiring link code to connect your Telegram account.</div>}
                   {app.accountEmail && (
                     <div className="text-[11px] text-sky-400 truncate">{app.accountEmail}</div>
                   )}
@@ -206,7 +213,7 @@ export function AppsView() {
                         key={tool}
                         className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60 truncate max-w-[170px]"
                       >
-                        {{gmail_list_unread:'Summarize unread email',calendar_list_upcoming:'View upcoming events'}[tool] || tool.replace(/_/g,' ')}
+                        {{gmail_list_unread:'Summarize unread email',calendar_list_upcoming:'View upcoming events',linkedin_get_profile:'Read LinkedIn profile',linkedin_create_post:'Publish LinkedIn post after approval',instagram_get_profile:'Read Instagram profile',instagram_list_conversations:'Read Instagram inbox',instagram_send_message:'Reply after approval'}[tool] || tool.replace(/_/g,' ')}
                       </span>
                     ))}
                   </div>
@@ -218,7 +225,7 @@ export function AppsView() {
                   onClick={() => setSelectedApp(app)}
                   className="text-xs text-slate-400 hover:text-slate-200 font-medium"
                 >
-                  {environmentManaged ? 'Setup details' : `Permissions (${app.scopes.length})`}
+                  {environmentManaged ? app.type === 'browser_playwright' ? 'Usage details' : 'Setup details' : `Permissions (${app.scopes.length})`}
                 </button>
 
                 <Button
@@ -229,7 +236,7 @@ export function AppsView() {
                   disabled={false}
                   className="text-xs"
                 >
-                  {environmentManaged ? isConnected ? 'Manage' : 'Link Telegram' : isConnected ? 'Disconnect' : 'Connect App'}
+                  {app.type === 'browser_playwright' ? 'Usage details' : environmentManaged ? isConnected ? 'Manage' : 'Link Telegram' : isConnected ? 'Disconnect' : 'Connect App'}
                 </Button>
               </CardFooter>
             </Card>
@@ -245,7 +252,11 @@ export function AppsView() {
           title={`${selectedApp.name} Permissions & Scopes`}
           description={selectedApp.type === 'telegram'
             ? 'Link your Telegram account to this NexusAI account. The shared bot only responds after you link it.'
-            : 'Permissions granted to NexusAI for this connection.'}
+            : selectedApp.type === 'instagram'
+              ? 'Connect your own Instagram Business or Creator account. Inbox replies always pause for your approval.'
+            : selectedApp.type === 'browser_playwright'
+              ? 'A fresh, isolated browser reads public HTTPS pages. It does not store site logins or cookies.'
+              : 'Permissions granted to NexusAI for this connection.'}
           maxWidth="lg"
         >
           <div className="space-y-4">
@@ -254,7 +265,19 @@ export function AppsView() {
               <div className="text-sky-300">{selectedApp.mcpServerName || 'External connection'}</div>
             </div>
 
-            {selectedApp.type === 'telegram' ? (
+            {selectedApp.type === 'instagram' ? (
+              <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+                <p>Instagram Login requires a professional Business or Creator account. NexusAI requests basic profile and messaging permissions only.</p>
+                <p>It can read recent conversations. A reply is sent only after you explicitly request it and approve the exact recipient and text in Approvals. The recipient must have messaged your account first.</p>
+                <p className="text-xs text-slate-500">Set up the Meta developer app and its redirect URI before connecting. In development mode, your Instagram account must be added as an app tester; public access requires Meta review and advanced access.</p>
+              </div>
+            ) : selectedApp.type === 'browser_playwright' ? (
+              <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
+                <p>NexusAI can inspect visible page text, links, and form labels on public HTTPS sites.</p>
+                <p>Filling a form or clicking a page control pauses in Approvals. You can review the URL and exact actions before they run.</p>
+                <p className="text-xs text-slate-500">Private network addresses are blocked. Sign-in protected pages, CAPTCHAs, and sites that block automation may not work. The browser session is discarded after each request.</p>
+              </div>
+            ) : selectedApp.type === 'telegram' ? (
               <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
                 {selectedApp.status === 'connected' ? (
                   <>

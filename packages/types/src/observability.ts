@@ -1,11 +1,11 @@
 import { RunStatus } from './activity';
 
 export interface TokenCostMetrics {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  estimatedCostUsd: number;
-  tokensPerSecond: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  estimatedCostUsd: number | null;
+  tokensPerSecond: number | null;
 }
 
 export interface LatencyBreakdown {
@@ -38,8 +38,8 @@ export interface SystemHealthSummary {
   activeRunsCount: number;
   successRate24h: number;
   averageLatencyMs: number;
-  totalTokens24h: number;
-  totalCost24hUsd: number;
+  totalTokens24h: number | null;
+  totalCost24hUsd: number | null;
   pendingApprovalsCount: number;
   connectedAppsCount: number;
   runs24h?: number;

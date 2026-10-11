@@ -8,6 +8,8 @@ export type IntegrationType =
   | 'slack'
   | 'notion'
   | 'github'
+  | 'linkedin'
+  | 'instagram'
   | 'custom_mcp';
 
 export type IntegrationStatus = 'connected' | 'disconnected' | 'error' | 'syncing';

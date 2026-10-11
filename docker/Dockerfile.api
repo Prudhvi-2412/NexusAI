@@ -2,6 +2,7 @@
 FROM python:3.11-slim
 
 WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # System dependencies for Playwright and Postgres client
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,9 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python packages
 COPY apps/api/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m playwright install --with-deps chromium
 
 # Copy backend application
 COPY apps/api /app
+
+RUN groupadd --system nexusai && useradd --system --gid nexusai --home-dir /home/nexusai --create-home nexusai \
+    && chown -R nexusai:nexusai /app
+
+USER nexusai
 
 EXPOSE 8000
 

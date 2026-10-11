@@ -36,7 +36,12 @@ export function TasksView() {
   const [newApproval, setNewApproval] = useState(false);
 
   useEffect(() => {
-    api.getTasks().then(setTasks).catch((error) => toast({ title: 'Could not load tasks', description: error.message, variant: 'destructive' }));
+    let active = true;
+    const refresh = () => api.getTasks().then((loaded) => { if (active) setTasks(loaded); })
+      .catch((error) => { if (active) toast({ title: 'Could not load tasks', description: error.message, variant: 'destructive' }); });
+    void refresh();
+    window.addEventListener('focus', refresh);
+    return () => { active = false; window.removeEventListener('focus', refresh); };
   }, []);
 
   const handleRunNow = async (task: ScheduledTask) => {
@@ -50,25 +55,29 @@ export function TasksView() {
   };
 
   const handleToggleTask = async (task: ScheduledTask) => {
-    const updated = await api.toggleTask(task.id, !task.enabled);
-    if (updated) {
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, enabled: !task.enabled, status: !task.enabled ? 'scheduled' : 'paused' } : t)));
-      toast({
-        title: updated.enabled ? 'Task Activated' : 'Task Paused',
-        description: `"${task.title}" cron schedule updated.`,
-        variant: updated.enabled ? 'success' : 'default',
-      });
+    try {
+      const updated = await api.toggleTask(task.id, !task.enabled);
+      if (updated) {
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
+        toast({
+          title: updated.enabled ? 'Task Activated' : 'Task Paused',
+          description: `"${task.title}" schedule updated.`,
+          variant: updated.enabled ? 'success' : 'default',
+        });
+      }
+    } catch (error) {
+      toast({ title: 'Could not update task', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
     }
   };
 
   const handleDeleteTask = async (id: string, title: string) => {
-    await api.deleteTask(id);
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    toast({
-      title: 'Task Removed',
-      description: `"${title}" has been deleted from scheduler.`,
-      variant: 'default',
-    });
+    try {
+      await api.deleteTask(id);
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+      toast({ title: 'Task Removed', description: `"${title}" has been deleted from the schedule.`, variant: 'default' });
+    } catch (error) {
+      toast({ title: 'Could not delete task', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' });
+    }
   };
 
   const handleCreateTask = async (e: React.FormEvent) => {
@@ -83,21 +92,17 @@ export function TasksView() {
         cronExpression: newCron,
         priority: newPriority,
         requiresHumanApproval: newApproval,
-        targetMcpServers: ['mcp-gmail', 'mcp-calendar'],
+        targetMcpServers: [],
       });
       setTasks((prev) => [created, ...prev]);
       setIsCreateModalOpen(false);
       setNewTitle('');
       setNewDescription('');
-      toast({
-        title: 'Task Scheduled',
-        description: 'Autonomous worker registered with APScheduler daemon.',
-        variant: 'success',
-      });
-    } catch {
+      toast({ title: 'Task Scheduled', description: 'NexusAI will run this saved read-only task on its schedule.', variant: 'success' });
+    } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to register scheduled task.',
+        description: error instanceof Error ? error.message : 'Failed to save the scheduled task.',
         variant: 'destructive',
       });
     }
@@ -205,6 +210,12 @@ export function TasksView() {
                   <p className="text-xs text-slate-300 leading-relaxed font-sans">
                     {task.description}
                   </p>
+                  {task.lastResult && (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Latest result</p>
+                      <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-300 line-clamp-5">{task.lastResult}</p>
+                    </div>
+                  )}
 
                   <div className="flex flex-wrap items-center gap-4 text-xs font-mono text-slate-400 pt-1">
                     <span className="flex items-center gap-1.5 text-sky-400">

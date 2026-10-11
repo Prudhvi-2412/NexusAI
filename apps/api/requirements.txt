@@ -12,3 +12,5 @@ langgraph>=1,<2
 langgraph-checkpoint-postgres>=3,<4
 langgraph-checkpoint-sqlite>=3,<4
 psycopg-pool>=3.2,<4
+lameenc>=1.8.4,<2
+playwright>=1.48,<2

@@ -29,10 +29,10 @@ export interface AgentRun {
   steps: ActivityStep[];
   currentStepIndex: number;
   tokenUsage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    estimatedCostUsd: number;
+    promptTokens: number | null;
+    completionTokens: number | null;
+    totalTokens: number | null;
+    estimatedCostUsd: number | null;
   };
   error?: string;
 }

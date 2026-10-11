@@ -313,7 +313,7 @@ export function SettingsView() {
               </div>
 
               <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">
-                Scheduled assistant runs use the approval mode and per task setting above. Gmail drafts can be saved only after approval and are never sent by NexusAI. Calendar write actions, Telegram messages, and browser submissions are not enabled.
+                Scheduled assistant runs use the approval mode and per task setting above. Gmail drafts and browser actions require your approval; NexusAI never sends Gmail messages. Browser access is limited to public HTTPS pages and does not keep site login sessions.
               </div>
 
               {/* Resource Throttling */}

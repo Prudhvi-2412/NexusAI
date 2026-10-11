@@ -6,6 +6,7 @@ import unittest
 import secrets
 import asyncio
 import json
+from types import SimpleNamespace
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -47,6 +48,54 @@ class ChatContractTest(unittest.TestCase):
         with TestClient(self.main.app) as client:
             self.assertEqual(client.get("/api/v1/conversations").status_code, 401)
 
+    def test_google_signin_uses_one_time_state_and_verified_account_session(self):
+        original_client = httpx.AsyncClient
+
+        def google_response(request):
+            if request.url.host == "oauth2.googleapis.com":
+                self.assertEqual(request.url.path, "/token")
+                return httpx.Response(200, json={"access_token": "identity-token"})
+            self.assertEqual(request.url.host, "openidconnect.googleapis.com")
+            return httpx.Response(200, json={"email": "verified@example.com", "email_verified": True})
+
+        with patch.object(self.main.settings, "google_client_id", "google-client-id"), \
+             patch.object(self.main.settings, "google_client_secret", "google-client-secret"), \
+             patch.object(self.main.settings, "session_secret", "test-only-session-secret"), \
+             patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(google_response), **kwargs)), \
+             TestClient(self.main.app, follow_redirects=False) as client:
+            start = client.get("/api/v1/auth/google/start")
+            self.assertEqual(start.status_code, 302)
+            state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+            with self.main.SessionLocal() as db:
+                self.assertEqual(db.get(self.main.OAuthState, state).flow, "login")
+            callback = client.get("/api/v1/integrations/google/callback", params={"state": state, "code": "one-time-code"})
+            self.assertEqual(callback.status_code, 303)
+            self.assertIn("HttpOnly", callback.headers["set-cookie"])
+            self.assertIn("SameSite=lax", callback.headers["set-cookie"])
+            self.assertEqual(client.get("/api/v1/auth/session").json()["email"], "verified@example.com")
+            self.assertEqual(client.get("/api/v1/conversations").status_code, 200)
+            with self.main.SessionLocal() as db:
+                session = db.query(self.main.AuthSession).filter_by(email="verified@example.com").one()
+                self.assertNotEqual(session.token_hash, client.cookies.get("nexus_session"))
+                self.assertIsNone(db.get(self.main.OAuthState, state))
+            replay = client.get("/api/v1/integrations/google/callback", params={"state": state, "code": "one-time-code"})
+            self.assertEqual(replay.status_code, 400)
+
+    def test_expired_session_and_foreign_mutation_origin_are_rejected(self):
+        with self.main.SessionLocal() as db:
+            expired = secrets.token_urlsafe(32)
+            db.add(self.main.AuthSession(
+                token_hash=self.main.session_digest(expired), email="expired@example.com",
+                owner_id="expired@example.com", expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            ))
+            db.commit()
+        with TestClient(self.main.app) as client:
+            client.cookies.set("nexus_session", expired)
+            self.assertEqual(client.get("/api/v1/auth/session").status_code, 401)
+            self.assertEqual(client.get("/api/v1/conversations").status_code, 401)
+            blocked = client.post("/api/v1/conversations", json={"title": "Should not be created"}, headers={"Origin": "https://attacker.example"})
+            self.assertEqual(blocked.status_code, 403)
+
     def test_users_cannot_read_or_mutate_each_others_data(self):
         with self.authenticated_client("alice@example.com") as alice:
             conversation = alice.post("/api/v1/conversations", json={"title": "Alice private"}).json()
@@ -65,6 +114,79 @@ class ChatContractTest(unittest.TestCase):
             self.assertEqual(bob.delete(f"/api/v1/memories/{memory['id']}").status_code, 404)
             connected = {item["id"]: item["status"] for item in bob.get("/api/v1/integrations").json()}
             self.assertEqual(connected["app_gmail"], "disconnected")
+
+    def test_saved_memory_persists_across_sessions_and_search_stays_owner_scoped(self):
+        with self.authenticated_client("persistent-memory-owner@example.com") as owner:
+            with patch.object(self.main, "embed_text", new=AsyncMock(return_value=None)):
+                created = owner.post("/api/v1/memories", json={
+                    "category": "preference",
+                    "title": "Preferred planning style",
+                    "content": "Keep project plans concise and use a short weekly checklist.",
+                    "tags": ["planning", "work"],
+                })
+            self.assertEqual(created.status_code, 201, created.text)
+            memory_id = created.json()["id"]
+
+        # A new client/session reads the committed record from the database.
+        with self.authenticated_client("persistent-memory-owner@example.com") as owner:
+            with patch.object(self.main, "embed_text", new=AsyncMock(return_value=None)):
+                listed = owner.get("/api/v1/memories")
+                searched = owner.get("/api/v1/memories", params={"query": "weekly planning checklist"})
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual([item["id"] for item in listed.json()], [memory_id])
+            self.assertEqual([item["id"] for item in searched.json()], [memory_id])
+
+        with self.authenticated_client("different-memory-owner@example.com") as other:
+            self.assertEqual(other.get("/api/v1/memories").json(), [])
+            self.assertEqual(other.get("/api/v1/memories", params={"query": "weekly planning checklist"}).json(), [])
+            self.assertEqual(other.delete(f"/api/v1/memories/{memory_id}").status_code, 404)
+
+    def test_postgres_transaction_binds_owner_context_for_rls(self):
+        calls = []
+
+        class FakeConnection:
+            dialect = SimpleNamespace(name="postgresql")
+
+            def execute(self, statement, parameters):
+                calls.append((str(statement), parameters))
+
+        token = self.main.current_owner.set("rls-owner@example.com")
+        try:
+            self.main.bind_postgres_owner_context(None, None, FakeConnection())
+        finally:
+            self.main.current_owner.reset(token)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("set_config('nexusai.owner_id'", calls[0][0])
+        self.assertEqual(calls[0][1], {"owner_id": "rls-owner@example.com"})
+
+    def test_workspace_bootstrap_returns_owner_conversations_and_active_messages(self):
+        with self.authenticated_client("workspace-fast@example.com") as client:
+            with self.main.SessionLocal() as db:
+                active = self.main.Conversation(
+                    id="conv_workspace_fast", title="Recent", owner_id="workspace-fast@example.com",
+                    updated_at=datetime.now(timezone.utc),
+                )
+                other = self.main.Conversation(
+                    id="conv_workspace_private", title="Other account", owner_id="someone-else@example.com",
+                    updated_at=datetime.now(timezone.utc) - timedelta(days=1),
+                )
+                db.add_all([active, other])
+                db.flush()
+                db.add_all([
+                    self.main.Message(id="msg_workspace_fast", conversation_id=active.id, role="user", content="Hello NexusAI"),
+                    self.main.Message(id="msg_workspace_private", conversation_id=other.id, role="user", content="Private to another account"),
+                ])
+                db.commit()
+
+            response = client.get("/api/v1/workspace/bootstrap")
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual([item["id"] for item in payload["conversations"]], ["conv_workspace_fast"])
+            self.assertEqual(payload["conversations"][0]["messageCount"], 1)
+            self.assertEqual(payload["conversations"][0]["lastMessagePreview"], "Hello NexusAI")
+            self.assertEqual([item["content"] for item in payload["messages"]], ["Hello NexusAI"])
+        with TestClient(self.main.app) as anonymous:
+            self.assertEqual(anonymous.get("/api/v1/workspace/bootstrap").status_code, 401)
 
     def test_memory_suggestions_are_private_and_require_approval_to_save(self):
         with self.authenticated_client("memory-owner@example.com") as owner:
@@ -186,6 +308,202 @@ class ChatContractTest(unittest.TestCase):
                 self.assertEqual(Fernet(key).decrypt(saved.access_token.encode()).decode(), "github-access-token")
                 self.assertEqual(Fernet(key).decrypt(saved.refresh_token.encode()).decode(), "github-refresh-token")
 
+    def test_linkedin_connection_is_owner_scoped_and_oauth_state_is_bound(self):
+        with patch.object(self.main.settings, "linkedin_client_id", "linkedin-client-id"), \
+             patch.object(self.main.settings, "linkedin_client_secret", "linkedin-client-secret"), \
+             self.authenticated_client("linkedin-alice@example.com") as alice:
+            response = alice.post("/api/v1/integrations/app_linkedin/connect")
+            self.assertEqual(response.status_code, 200, response.text)
+            authorization = parse_qs(urlparse(response.json()["authUrl"]).query)
+            self.assertEqual(authorization["client_id"], ["linkedin-client-id"])
+            self.assertEqual(set(authorization["scope"][0].split()), {"openid", "profile", "email", "w_member_social"})
+            with self.main.SessionLocal() as db:
+                state = db.get(self.main.OAuthState, authorization["state"][0])
+                self.assertEqual(state.owner_id, "linkedin-alice@example.com")
+                self.assertEqual(state.flow, "linkedin")
+            self.assertEqual({item["id"]: item["status"] for item in alice.get("/api/v1/integrations").json()}["app_linkedin"], "disconnected")
+        with self.authenticated_client("linkedin-bob@example.com") as bob:
+            self.assertEqual({item["id"]: item["status"] for item in bob.get("/api/v1/integrations").json()}["app_linkedin"], "disconnected")
+
+    def test_linkedin_callback_encrypts_token_and_saves_profile_for_oauth_owner(self):
+        key = Fernet.generate_key()
+        original_client = httpx.AsyncClient
+
+        def linkedin_response(request):
+            if request.url.host == "www.linkedin.com" and request.url.path.endswith("/accessToken"):
+                return httpx.Response(200, json={"access_token": "linkedin-access-token", "expires_in": 3600, "scope": "openid profile email w_member_social"})
+            if request.url.host == "api.linkedin.com" and request.url.path == "/v2/userinfo":
+                self.assertEqual(request.headers["Authorization"], "Bearer linkedin-access-token")
+                return httpx.Response(200, json={"sub": "member-42", "name": "Prudhvi", "email": "prudhvi@example.com", "picture": "https://example.com/p.png"})
+            return httpx.Response(404)
+
+        with patch.object(self.main.settings, "linkedin_client_id", "linkedin-client-id"), \
+             patch.object(self.main.settings, "linkedin_client_secret", "linkedin-client-secret"), \
+             patch.object(self.main.settings, "google_token_key", key.decode()), \
+             patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(linkedin_response), **kwargs)), \
+             TestClient(self.main.app) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.OAuthState(state="linkedin-callback-state", integration_id="app_linkedin", flow="linkedin", owner_id="linkedin-callback-owner@example.com"))
+                db.commit()
+            response = client.get("/api/v1/integrations/linkedin/callback", params={"state": "linkedin-callback-state", "code": "one-time-code"}, follow_redirects=False)
+            self.assertEqual(response.status_code, 303)
+            self.assertIn("connected=linkedin", response.headers["location"])
+            with self.main.SessionLocal() as db:
+                saved = db.get(self.main.LinkedInCredential, "linkedin-callback-owner@example.com")
+                self.assertEqual(saved.subject, "member-42")
+                self.assertEqual(saved.email, "prudhvi@example.com")
+                self.assertEqual(Fernet(key).decrypt(saved.access_token_encrypted.encode()).decode(), "linkedin-access-token")
+        with self.authenticated_client("linkedin-callback-owner@example.com") as linked_user:
+            item = next(item for item in linked_user.get("/api/v1/integrations").json() if item["id"] == "app_linkedin")
+            self.assertEqual(item["accountHandle"], "Prudhvi")
+            self.assertIn("linkedin_create_post", item["toolsProvided"])
+
+    def test_linkedin_publish_uses_exact_approved_post_and_member_token(self):
+        owner = "linkedin-publisher@example.com"
+        key = Fernet.generate_key()
+        approval_id = "linkedin-post-approval"
+        commentary = "NexusAI approved LinkedIn post"
+        observed = []
+        original_client = httpx.AsyncClient
+
+        def linkedin_response(request):
+            observed.append(request)
+            self.assertEqual(request.url.path, "/rest/posts")
+            self.assertEqual(request.headers["Authorization"], "Bearer linkedin-post-token")
+            self.assertEqual(request.headers["Linkedin-Version"], self.main.settings.linkedin_api_version)
+            self.assertEqual(request.headers["X-Restli-Protocol-Version"], "2.0.0")
+            payload = json.loads(request.content)
+            self.assertEqual(payload["author"], "urn:li:person:member-poster")
+            self.assertEqual(payload["commentary"], commentary)
+            self.assertEqual(payload["lifecycleState"], "PUBLISHED")
+            return httpx.Response(201, headers={"x-restli-id": "urn:li:share:123"})
+
+        with patch.object(self.main.settings, "google_token_key", key.decode()), \
+             patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(linkedin_response), **kwargs)), \
+             self.authenticated_client(owner) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.LinkedInCredential(
+                    owner_id=owner, subject="member-poster", name="Poster", access_token_encrypted=Fernet(key).encrypt(b"linkedin-post-token").decode(),
+                    scope="openid profile email w_member_social", expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.add(self.main.ApprovalRecord(
+                    id=approval_id, owner_id=owner, impact="high", status="approved", title="Publish LinkedIn post",
+                    explanation="Publish reviewed text", service="linkedin", action="mcp_tool", target="create_post",
+                    parameters={"commentary": commentary}, decided_at=datetime.now(timezone.utc),
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.commit()
+            tampered = client.portal.call(self.main.execute_approved_mcp, owner, "linkedin", "create_post", {"commentary": "Changed after approval"}, approval_id)
+            self.assertFalse(tampered["success"])
+            self.assertEqual(observed, [])
+            result = client.portal.call(self.main.execute_approved_mcp, owner, "linkedin", "create_post", {"commentary": commentary}, approval_id)
+            self.assertTrue(result["success"], result)
+            self.assertIn("published", result["message"])
+            self.assertEqual(len(observed), 1)
+
+    def test_instagram_oauth_scopes_and_owner_bound_callback(self):
+        owner = "instagram-owner@example.com"
+        key = Fernet.generate_key()
+        original_client = httpx.AsyncClient
+        with patch.object(self.main.settings, "instagram_app_id", "meta-app-id"), \
+             patch.object(self.main.settings, "instagram_app_secret", "meta-app-secret"), \
+             patch.object(self.main.settings, "google_token_key", key.decode()), \
+             self.authenticated_client(owner) as client:
+            started = client.post("/api/v1/integrations/app_instagram/connect")
+            self.assertEqual(started.status_code, 200, started.text)
+            auth_url = urlparse(started.json()["authUrl"])
+            query = parse_qs(auth_url.query)
+            self.assertEqual(auth_url.hostname, "www.instagram.com")
+            self.assertEqual(set(query["scope"][0].split(",")), set(self.main.INSTAGRAM_SCOPES))
+            self.assertEqual(query["enable_fb_login"], ["0"])
+            state = query["state"][0]
+            with self.main.SessionLocal() as db:
+                oauth_state = db.get(self.main.OAuthState, state)
+                self.assertEqual(oauth_state.owner_id, owner)
+
+            def instagram_response(request):
+                if request.url.host == "api.instagram.com":
+                    return httpx.Response(200, json={"access_token": "short-token", "user_id": "ig-user-1"})
+                if request.url.path == "/access_token":
+                    return httpx.Response(200, json={"access_token": "long-token", "expires_in": 5184000})
+                self.assertEqual(request.url.path, "/v26.0/me")
+                self.assertIn("username", request.url.params["fields"])
+                return httpx.Response(200, json={"user_id": "ig-user-1", "username": "nexus_test", "account_type": "BUSINESS"})
+
+            with patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(instagram_response), **kwargs)):
+                with TestClient(self.main.app) as anonymous:
+                    callback = anonymous.get("/api/v1/integrations/instagram/callback", params={"state": state, "code": "oauth-code"}, follow_redirects=False)
+            self.assertEqual(callback.status_code, 303)
+            self.assertIn("connected=instagram", callback.headers["location"])
+            with self.main.SessionLocal() as db:
+                credential = db.get(self.main.InstagramCredential, owner)
+                self.assertEqual(credential.username, "nexus_test")
+                self.assertEqual(Fernet(key).decrypt(credential.access_token_encrypted.encode()).decode(), "long-token")
+                self.assertIsNone(db.get(self.main.InstagramCredential, "other-user@example.com"))
+        with self.authenticated_client(owner) as connected:
+            item = next(item for item in connected.get("/api/v1/integrations").json() if item["id"] == "app_instagram")
+            self.assertEqual(item["accountHandle"], "@nexus_test")
+            self.assertIn("instagram_list_conversations", item["toolsProvided"])
+        with self.authenticated_client("instagram-other@example.com") as other:
+            item = next(item for item in other.get("/api/v1/integrations").json() if item["id"] == "app_instagram")
+            self.assertEqual(item["status"], "disconnected")
+
+    def test_instagram_reply_runs_only_from_approved_exact_action(self):
+        owner = "instagram-reply@example.com"
+        key = Fernet.generate_key()
+        approval_id = "instagram-approval"
+        sent = []
+        original_client = httpx.AsyncClient
+
+        def instagram_response(request):
+            if request.method == "GET":
+                self.assertEqual(request.url.path, "/v26.0/conversation-1")
+                return httpx.Response(200, json={"participants": {"data": [{"id": "ig-user-2"}, {"id": "ig-user-1"}]}})
+            sent.append(request)
+            self.assertEqual(request.url.path, "/v26.0/ig-user-1/messages")
+            self.assertEqual(request.headers["Authorization"], "Bearer instagram-token")
+            self.assertEqual(json.loads(request.content), {"recipient": {"id": "ig-user-2"}, "message": {"text": "Exact approved reply"}})
+            return httpx.Response(200, json={"message_id": "message-1", "recipient_id": "ig-user-2"})
+
+        with patch.object(self.main.settings, "google_token_key", key.decode()), \
+             patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(instagram_response), **kwargs)), \
+             self.authenticated_client(owner) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.InstagramCredential(
+                    owner_id=owner, instagram_user_id="ig-user-1", username="nexus_test", account_type="BUSINESS",
+                    access_token_encrypted=Fernet(key).encrypt(b"instagram-token").decode(),
+                    scope="instagram_business_basic instagram_business_manage_messages",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.add(self.main.ApprovalRecord(
+                    id=approval_id, owner_id=owner, impact="high", status="approved", title="Send Instagram reply",
+                    explanation="Send reviewed response", service="instagram", action="mcp_tool", target="send_message",
+                    parameters={"conversation_id": "conversation-1", "recipient_id": "ig-user-2", "text": "Exact approved reply"},
+                    decided_at=datetime.now(timezone.utc), expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.commit()
+            result = client.portal.call(self.main.execute_approved_mcp, owner, "instagram", "send_message", {
+                "conversation_id": "conversation-1", "recipient_id": "ig-user-2", "text": "Exact approved reply",
+            }, approval_id)
+            self.assertTrue(result["success"], result)
+            self.assertEqual(len(sent), 1)
+
+            invalid = None
+            with self.main.SessionLocal() as db:
+                pending_id = "instagram-pending"
+                db.add(self.main.ApprovalRecord(
+                    id=pending_id, owner_id=owner, impact="high", status="pending", title="Pending reply",
+                    explanation="Not approved", service="instagram", action="mcp_tool", target="send_message",
+                    parameters={"conversation_id": "conversation-1", "recipient_id": "ig-user-2", "text": "No send"},
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.commit()
+            invalid = client.portal.call(self.main.execute_approved_mcp, owner, "instagram", "send_message", {
+                "conversation_id": "conversation-1", "recipient_id": "ig-user-2", "text": "No send",
+            }, "instagram-pending")
+            self.assertFalse(invalid["success"])
+            self.assertEqual(len(sent), 1)
+
     def test_settings_and_runs_are_account_scoped_and_settings_are_applied(self):
         with self.authenticated_client("prefs-a@example.com") as alice:
             settings = alice.get("/api/v1/settings").json()
@@ -222,6 +540,211 @@ class ChatContractTest(unittest.TestCase):
             denied = alice.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "reject", "notes": "Not now"})
             self.assertEqual(denied.status_code, 200, denied.text)
             self.assertEqual(denied.json()["status"], "rejected")
+
+    def test_approved_scheduled_task_runs_and_persists_its_result(self):
+        owner = "task-approval-owner@example.com"
+        streamed = []
+
+        async def fake_stream(payload, db):
+            streamed.append((payload.message, self.main.owner_id()))
+            db.add(self.main.AgentRunRecord(
+                id="run_scheduled_test", owner_id=self.main.owner_id(), conversation_id=payload.conversationId,
+                task_id=self.main.current_task_id.get(), task_title="Daily inbox summary", status="completed",
+                started_at=datetime.now(timezone.utc), duration_ms=25,
+            ))
+            db.commit()
+
+            async def body_iterator():
+                yield b'data: {"delta":"There are two unread messages."}\n\n'
+                yield b'data: {"runId":"run_scheduled_test","status":"completed"}\n\n'
+
+            return type("FakeStreamingResponse", (), {"body_iterator": body_iterator()})()
+
+        with self.authenticated_client(owner) as client:
+            created = client.post("/api/v1/tasks", json={
+                "title": "Daily inbox summary", "description": "Summarize unread messages",
+                "cronExpression": "0 8 * * 1-5", "priority": "medium", "requiresHumanApproval": True,
+            })
+            self.assertEqual(created.status_code, 201, created.text)
+            task_id = created.json()["id"]
+            requested = client.post(f"/api/v1/tasks/{task_id}/run")
+            self.assertEqual(requested.status_code, 200, requested.text)
+            approval_id = requested.json()["approval"]["id"]
+
+            with patch.object(self.main, "stream_agent", new=AsyncMock(side_effect=fake_stream)):
+                approved = client.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "approve"})
+
+            self.assertEqual(approved.status_code, 200, approved.text)
+            self.assertEqual(approved.json()["status"], "approved")
+            task = next(item for item in client.get("/api/v1/tasks").json() if item["id"] == task_id)
+            self.assertEqual(task["status"], "completed")
+            self.assertEqual(task["lastResult"], "There are two unread messages.")
+            self.assertEqual(task["lastRuns"][0]["summary"], "There are two unread messages.")
+            self.assertEqual(len(streamed), 1)
+            self.assertEqual(streamed[0][1], owner)
+
+            duplicate_decision = client.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "approve"})
+            self.assertEqual(duplicate_decision.status_code, 409)
+
+    def test_scheduled_tasks_only_receive_read_only_connector_tools(self):
+        tools = [
+            {"name": "google__gmail_list_unread", "readOnly": True, "requiresApproval": False},
+            {"name": "google__gmail_create_draft", "readOnly": False, "requiresApproval": True},
+            {"name": "custom__write", "readOnly": False, "requiresApproval": False},
+        ]
+        self.assertEqual(
+            [tool["name"] for tool in self.main.filter_scheduled_task_tools(tools)],
+            ["google__gmail_list_unread"],
+        )
+
+    def test_browser_tools_are_safe_and_scheduled_runs_only_get_inspection(self):
+        from app.browser_automation import browser_tool_definitions, validate_action_plan, validate_url_syntax
+
+        self.assertEqual([tool["name"] for tool in browser_tool_definitions(include_actions=False)], ["browser__inspect_page"])
+        tools = browser_tool_definitions()
+        self.assertTrue(tools[0]["readOnly"])
+        self.assertFalse(tools[0]["requiresApproval"])
+        self.assertTrue(tools[1]["requiresApproval"])
+        self.assertEqual(validate_url_syntax("https://example.org/path")[0], "example.org")
+        for unsafe in ("http://example.org", "https://localhost", "https://127.0.0.1", "https://10.0.0.2", "https://example.org:8443"):
+            with self.assertRaises(ValueError, msg=unsafe):
+                validate_url_syntax(unsafe)
+        url, actions = validate_action_plan({"url": "https://example.org/form", "actions": [
+            {"action": "fill", "target": "Message", "value": "Hello"},
+            {"action": "click", "target": "Submit"},
+        ]})
+        self.assertEqual(url, "https://example.org/form")
+        self.assertEqual(actions[0]["value"], "Hello")
+        with self.assertRaises(ValueError):
+            validate_action_plan({"url": "https://example.org", "actions": [{"action": "evaluate", "target": "document.cookie"}]})
+
+    def test_browser_action_runs_only_after_explicit_approval(self):
+        owner = "browser-approval-owner@example.com"
+        approval_id = "approval_browser_action_test"
+        arguments = {"url": "https://example.org/contact", "actions": [
+            {"action": "fill", "target": "Message", "value": "Please contact me."},
+            {"action": "click", "target": "Submit"},
+        ]}
+        with self.authenticated_client(owner) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.ApprovalRecord(
+                    id=approval_id, owner_id=owner, impact="high", status="pending",
+                    title="Review website actions", explanation="Review before it runs.",
+                    service="browser", action="mcp_tool", target="perform_actions",
+                    parameters={"tool": "perform_actions", "arguments": arguments},
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.commit()
+
+            async def stage_action():
+                await self.main.action_graph.ainvoke(
+                    {"owner_id": owner, "approval_id": approval_id, "server": "browser", "tool": "perform_actions", "arguments": arguments},
+                    {"configurable": {"thread_id": approval_id}, "metadata": {"owner_id": owner}},
+                )
+
+            client.portal.call(stage_action)
+            with patch.object(self.main, "perform_actions", new=AsyncMock(return_value={"success": True, "message": "Approved actions completed."})) as perform:
+                self.assertEqual(client.get("/api/v1/approvals").json()[0]["status"], "pending")
+                perform.assert_not_awaited()
+                approved = client.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "approve"})
+                self.assertEqual(approved.status_code, 200, approved.text)
+                self.assertEqual(approved.json()["status"], "approved")
+                perform.assert_awaited_once_with(arguments)
+                duplicate = client.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "approve"})
+                self.assertEqual(duplicate.status_code, 409)
+                perform.assert_awaited_once()
+
+    def test_browser_is_listed_as_built_in_integration(self):
+        with self.authenticated_client("browser-connection-owner@example.com") as client:
+            browser = next(item for item in client.get("/api/v1/integrations").json() if item["id"] == "app_browser_playwright")
+            self.assertEqual(browser["status"], "connected")
+            self.assertIn("browser_inspect_page", browser["toolsProvided"])
+
+    def test_playwright_chromium_launches_in_isolated_context(self):
+        from app.browser_automation import _new_page
+
+        with TestClient(self.main.app) as client:
+            async def launch_and_close():
+                playwright, browser, context, page = await _new_page()
+                try:
+                    return await page.title()
+                finally:
+                    await context.close()
+                    await browser.close()
+                    await playwright.stop()
+
+            self.assertEqual(client.portal.call(launch_and_close), "")
+
+    def test_approved_gmail_action_resumes_once_through_checkpoint(self):
+        owner = "approved-action-owner@example.com"
+        approval_id = "approval_durable_action_test"
+        arguments = {"to": "recipient@example.com", "subject": "A reviewed draft", "body": "Hello"}
+        with self.authenticated_client(owner) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.ApprovalRecord(
+                    id=approval_id, owner_id=owner, impact="high", status="pending",
+                    title="Review Gmail draft", explanation="Create only after approval.",
+                    service="google", action="gmail_draft", target="gmail_create_draft",
+                    parameters={"arguments": arguments},
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.commit()
+
+            async def stage_action():
+                return await self.main.action_graph.ainvoke(
+                    {"owner_id": owner, "approval_id": approval_id, "server": "google", "tool": "gmail_create_draft", "arguments": arguments},
+                    {"configurable": {"thread_id": approval_id}, "metadata": {"owner_id": owner}},
+                )
+
+            self.assertIsNotNone(client.portal)
+            client.portal.call(stage_action)
+            with patch.object(self.main, "create_approved_gmail_draft", new=AsyncMock(return_value={"success": True, "message": "Draft saved for review."})) as create_draft:
+                response = client.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "approve"})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["status"], "approved")
+                self.assertEqual(response.json()["decisionNotes"], "Draft saved for review.")
+                create_draft.assert_awaited_once_with(arguments)
+                duplicate = client.post(f"/api/v1/approvals/{approval_id}/decision", json={"decision": "approve"})
+                self.assertEqual(duplicate.status_code, 409)
+                create_draft.assert_awaited_once()
+            with self.main.SessionLocal() as db:
+                saved = db.get(self.main.ApprovalRecord, approval_id)
+                self.assertIsNotNone(saved.execution_started_at)
+                self.assertIsNotNone(saved.execution_finished_at)
+
+    def test_approved_action_recovers_if_process_stopped_before_resume(self):
+        owner = "recovery-action-owner@example.com"
+        approval_id = "approval_recovered_action_test"
+        arguments = {"to": "recipient@example.com", "subject": "Recovered draft", "body": "Hello"}
+        with self.authenticated_client(owner) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.ApprovalRecord(
+                    id=approval_id, owner_id=owner, impact="high", status="approved",
+                    title="Review Gmail draft", explanation="Approved before service restart.",
+                    service="google", action="gmail_draft", target="gmail_create_draft",
+                    parameters={"arguments": arguments}, decided_at=datetime.now(timezone.utc),
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                ))
+                db.commit()
+
+            async def stage_action():
+                return await self.main.action_graph.ainvoke(
+                    {"owner_id": owner, "approval_id": approval_id, "server": "google", "tool": "gmail_create_draft", "arguments": arguments},
+                    {"configurable": {"thread_id": approval_id}, "metadata": {"owner_id": owner}},
+                )
+
+            client.portal.call(stage_action)
+            with patch.object(self.main, "create_approved_gmail_draft", new=AsyncMock(return_value={"success": True, "message": "Recovered and saved draft."})) as create_draft:
+                recovered = client.portal.call(self.main.resume_approved_connector_action, approval_id, owner)
+                self.assertTrue(recovered["success"])
+                create_draft.assert_awaited_once_with(arguments)
+                duplicate = client.portal.call(self.main.resume_approved_connector_action, approval_id, owner)
+                self.assertTrue(duplicate["success"])
+                create_draft.assert_awaited_once()
+            with self.main.SessionLocal() as db:
+                saved = db.get(self.main.ApprovalRecord, approval_id)
+                self.assertIsNotNone(saved.execution_started_at)
+                self.assertIsNotNone(saved.execution_finished_at)
 
     def test_google_sign_in_registers_verified_new_email(self):
         original_client = httpx.AsyncClient
@@ -279,6 +802,67 @@ class ChatContractTest(unittest.TestCase):
                 self.assertIsNotNone(db.get(self.main.Conversation, link.conversation_id))
                 self.assertIsNone(db.get(self.main.TelegramLinkCode, self.main.telegram_code_digest(code)))
 
+    def test_telegram_voice_message_transcribes_runs_for_linked_user_and_returns_voice(self):
+        self.main.Base.metadata.create_all(self.main.engine)
+        owner = "voice-owner@example.com"
+        telegram_id = "7654322"
+        conversation_id = "conv_telegram_voice_test"
+        with self.main.SessionLocal() as db:
+            db.add(self.main.Conversation(id=conversation_id, title="Telegram voice", owner_id=owner))
+            db.add(self.main.TelegramConversation(
+                user_id=telegram_id, chat_id=telegram_id, conversation_id=conversation_id, owner_id=owner,
+            ))
+            db.commit()
+
+        sent_texts = []
+        sent_voice = []
+        streamed_messages = []
+        execution_owner = []
+
+        async def fake_send(_client, _chat_id, text):
+            sent_texts.append(text)
+
+        async def fake_api(_client, _method, _payload):
+            return {}
+
+        async def fake_stream(payload, _db):
+            streamed_messages.append(payload.message)
+            execution_owner.append(self.main.owner_id())
+
+            async def body_iterator():
+                yield b'data: {"delta":"You have one meeting."}\n\n'
+                yield b'data: {"runId":"run_voice_test","status":"completed"}\n\n'
+
+            return type("FakeStreamingResponse", (), {"body_iterator": body_iterator()})()
+
+        voice = {
+            "message": {
+                "chat": {"id": int(telegram_id), "type": "private"},
+                "from": {"id": int(telegram_id)},
+                "voice": {"file_id": "telegram-file-id", "file_size": 1000, "duration": 3, "mime_type": "audio/ogg"},
+            },
+        }
+
+        async def run_update():
+            async with httpx.AsyncClient() as fake_client:
+                await self.main.telegram_handle_message(fake_client, voice)
+
+        with patch.object(self.main, "telegram_send", new=fake_send), \
+             patch.object(self.main, "telegram_api", new=fake_api), \
+             patch.object(self.main, "telegram_download_voice", new=AsyncMock(return_value=(b"telegram-audio", "audio/ogg"))), \
+             patch.object(self.main, "telegram_transcribe_voice", new=AsyncMock(return_value="What is on my calendar today?")), \
+             patch.object(self.main, "telegram_generate_voice_reply", new=AsyncMock(return_value=b"wav-audio")), \
+             patch.object(self.main, "telegram_encode_voice", new=AsyncMock(return_value=b"mp3-audio")), \
+             patch.object(self.main, "telegram_send_voice", new=AsyncMock(side_effect=lambda _client, chat, audio: sent_voice.append((chat, audio)))), \
+             patch.object(self.main, "stream_agent", new=AsyncMock(side_effect=fake_stream)):
+            asyncio.run(run_update())
+
+        self.assertEqual(streamed_messages, ["What is on my calendar today?"])
+        self.assertEqual(execution_owner, [owner])
+        self.assertIn("Transcript: What is on my calendar today?", sent_texts[0])
+        self.assertIn("You have one meeting.", sent_texts[0])
+        self.assertEqual(sent_voice, [(telegram_id, b"mp3-audio")])
+
     def test_cors_preflight_is_allowed_without_session(self):
         with TestClient(self.main.app) as client:
             response = client.options(
@@ -324,7 +908,7 @@ class ChatContractTest(unittest.TestCase):
             self.assertIn("streamGenerateContent", str(request.url))
             return httpx.Response(
                 200,
-                text='data: {"candidates":[{"content":{"parts":[{"text":"Hello from Gemini"}]}}]}\n\n',
+                text='data: {"candidates":[{"content":{"parts":[{"text":"Hello from Gemini"}]}}],"usageMetadata":{"promptTokenCount":13,"candidatesTokenCount":4,"totalTokenCount":17}}\n\n',
                 headers={"content-type": "text/event-stream"},
             )
 
@@ -350,6 +934,12 @@ class ChatContractTest(unittest.TestCase):
             self.assertIn("event: run:complete", response.text)
             messages = client.get(f"/api/v1/conversations/{conversation['id']}/messages").json()
             self.assertEqual([message["content"] for message in messages], ["Hello", "Hello from Gemini"])
+            activity_run = client.get("/api/v1/activity/runs").json()[0]
+            self.assertEqual(activity_run["tokenUsage"]["promptTokens"], 13)
+            self.assertEqual(activity_run["tokenUsage"]["completionTokens"], 4)
+            self.assertEqual(activity_run["tokenUsage"]["totalTokens"], 17)
+            self.assertIsNone(activity_run["tokenUsage"]["estimatedCostUsd"])
+            self.assertEqual(client.get("/api/v1/observability/stats").json()["totalTokens24h"], 17)
             self.assertEqual(client.get("/api/v1/memories").json(), [])
             suggestions = client.get("/api/v1/memory-suggestions").json()
             self.assertEqual(len(suggestions), 1)

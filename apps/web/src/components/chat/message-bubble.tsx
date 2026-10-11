@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { Copy, Check } from 'lucide-react';
 import { Brand } from '@/components/layout/app-shell';
 import { toast } from '@/lib/hooks/use-toast';
+import { speakText, stopSpeaking } from '@/lib/speech';
 
 interface MessageBubbleProps {
   message: Message;
@@ -30,22 +31,16 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       return;
     }
     if (speaking) {
-      window.speechSynthesis.cancel();
+      stopSpeaking();
       setSpeaking(false);
       return;
     }
-    window.speechSynthesis.cancel();
-    const spokenText = message.content.slice(0, 12000)
-      .replace(/^#{1,6}\s+/gm, '')
-      .replace(/^\s*[-*]\s+/gm, '')
-      .replace(/\*\*(.*?)\*\*/g, '$1')
-      .replace(/`([^`]*)`/g, '$1');
-    const utterance = new SpeechSynthesisUtterance(spokenText);
-    utterance.lang = navigator.language || 'en-US';
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+    const started = speakText(message.content, {
+      onStart: () => setSpeaking(true),
+      onEnd: () => setSpeaking(false),
+      onError: () => setSpeaking(false),
+    });
+    if (!started) setSpeaking(false);
   };
 
   // Render the small, safe subset of Markdown used by assistant summaries.

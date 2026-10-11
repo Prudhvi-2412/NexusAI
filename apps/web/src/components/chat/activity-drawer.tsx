@@ -68,9 +68,9 @@ export function ActivityDrawer({ run, isOpen, onToggle }: ActivityDrawerProps) {
               <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
                 <span className="flex items-center gap-1">
                   <Zap className="w-3 h-3 text-amber-400" />
-                  {run.tokenUsage.totalTokens.toLocaleString()} tokens
+                  {run.tokenUsage.totalTokens == null ? 'Usage not reported' : `${run.tokenUsage.totalTokens.toLocaleString()} tokens`}
                 </span>
-                <span>Est: ${(run.tokenUsage.estimatedCostUsd).toFixed(4)}</span>
+                <span>{run.tokenUsage.estimatedCostUsd == null ? 'Cost unavailable' : `Est: $${run.tokenUsage.estimatedCostUsd.toFixed(4)}`}</span>
               </div>
             )}
           </div>

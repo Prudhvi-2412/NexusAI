@@ -20,6 +20,8 @@ import {
   ArrowRight,
   Terminal,
   Cpu,
+  Linkedin,
+  Instagram,
 } from 'lucide-react';
 import { formatTimeAgo } from '@/lib/utils';
 import { toast } from '@/lib/hooks/use-toast';
@@ -33,7 +35,7 @@ export function ApprovalsView() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    api.getApprovals().then(setApprovals);
+    api.getApprovals().then(setApprovals).catch((error) => toast({ title: 'Could not load approvals', description: error instanceof Error ? error.message : 'Request failed', variant: 'destructive' }));
   }, []);
 
   const handleOpenActionModal = (approval: ApprovalRequest, type: 'approve' | 'reject') => {
@@ -67,10 +69,10 @@ export function ApprovalsView() {
       });
       setSelectedApproval(null);
       setActionType(null);
-    } catch {
+    } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to record approval decision.',
+        description: error instanceof Error ? error.message : 'Failed to record approval decision.',
         variant: 'destructive',
       });
     } finally {
@@ -106,6 +108,10 @@ export function ApprovalsView() {
         return <Send className="w-4 h-4 text-blue-400" />;
       case 'browser':
         return <Globe className="w-4 h-4 text-emerald-400" />;
+      case 'linkedin':
+        return <Linkedin className="w-4 h-4 text-sky-400" />;
+      case 'instagram':
+        return <Instagram className="w-4 h-4 text-pink-400" />;
       default:
         return <Terminal className="w-4 h-4 text-slate-400" />;
     }

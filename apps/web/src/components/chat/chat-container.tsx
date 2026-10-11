@@ -17,12 +17,15 @@ import {
   Command,
   ChevronDown,
   Layers,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { toast } from '@/lib/hooks/use-toast';
 import { MOCK_ACTIVE_RUN } from '@/lib/api/mock-data';
 import { motion } from 'motion/react';
 import { ArrowUp, Mail, Calendar, PenLine } from 'lucide-react';
 import { Brand } from '@/components/layout/app-shell';
+import { speakText, stopSpeaking, supportsSpeechOutput } from '@/lib/speech';
 
 export function ChatContainer() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -32,6 +35,9 @@ export function ChatContainer() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speechRecognitionAvailable, setSpeechRecognitionAvailable] = useState(false);
+  const [speechOutputAvailable, setSpeechOutputAvailable] = useState(false);
+  const [autoSpeakReplies, setAutoSpeakReplies] = useState(false);
+  const [isSpeakingReply, setIsSpeakingReply] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [activeRun, setActiveRun] = useState<AgentRun | null>(
@@ -42,14 +48,22 @@ export function ChatContainer() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const autoSpeakRef = useRef(false);
+  const skipNextMessageFetchRef = useRef(false);
 
-  // Load conversations and initial messages
+  // Fetch the sidebar and active conversation together to avoid serial Neon round trips.
   useEffect(() => {
-    api.getConversations()
-      .then(async (convs) => {
-        const available = convs.length ? convs : [await api.createConversation('New Agent Session')];
+    api.getWorkspaceBootstrap()
+      .then(async (workspace) => {
+        const available = workspace.conversations.length
+          ? workspace.conversations
+          : [await api.createConversation('New Agent Session')];
+        const active = available[0];
+        setMessages(workspace.conversations.length ? workspace.messages : []);
+        skipNextMessageFetchRef.current = true;
         setConversations(available);
-        setActiveConvId(available[0].id);
+        setActiveConvId(active.id);
+        setIsLoadingMessages(false);
       })
       .catch(() => { setIsLoadingMessages(false); setLoadError(true); });
   }, []);
@@ -57,6 +71,11 @@ export function ChatContainer() {
   useEffect(() => {
     let current = true;
     if (activeConvId) {
+      if (skipNextMessageFetchRef.current) {
+        skipNextMessageFetchRef.current = false;
+        setIsLoadingMessages(false);
+        return () => { current = false; };
+      }
       setIsLoadingMessages(true);
       api.getMessages(activeConvId).then((msgs) => {
         if(current) setMessages(msgs);
@@ -69,9 +88,17 @@ export function ChatContainer() {
   useEffect(() => {
     const speechWindow = window as Window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
     setSpeechRecognitionAvailable(Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition));
+    setSpeechOutputAvailable(supportsSpeechOutput());
+    try {
+      const savedPreference = window.localStorage.getItem('nexusai-auto-speak-replies') === 'true';
+      autoSpeakRef.current = savedPreference;
+      setAutoSpeakReplies(savedPreference);
+    } catch {
+      // Voice playback remains available when browser storage is disabled.
+    }
     return () => {
       recognitionRef.current?.abort();
-      window.speechSynthesis?.cancel();
+      stopSpeaking();
     };
   }, []);
 
@@ -82,6 +109,8 @@ export function ChatContainer() {
   const handleSendMessage = async (textToSend?: string) => {
     const text = textToSend || inputValue;
     if (!text.trim() || isStreaming || !activeConvId) return;
+    stopSpeaking();
+    setIsSpeakingReply(false);
 
     setInputValue('');
 
@@ -150,6 +179,7 @@ export function ChatContainer() {
     // 3. Initiate Streaming Call
     let runFailed = false;
     let runPaused = false;
+    let assistantResponseText = '';
     api.streamAgentRun(
       text,
       activeConvId,
@@ -306,6 +336,7 @@ export function ChatContainer() {
           }
         },
         onChunk: (chunk) => {
+          assistantResponseText += chunk;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMsgId
@@ -341,6 +372,16 @@ export function ChatContainer() {
                 : m
             )
           );
+          if (!runFailed && !runPaused && autoSpeakRef.current && assistantResponseText.trim()) {
+            speakText(assistantResponseText, {
+              onStart: () => setIsSpeakingReply(true),
+              onEnd: () => setIsSpeakingReply(false),
+              onError: () => {
+                setIsSpeakingReply(false);
+                toast({ title: 'Could not play spoken reply', description: 'Use the read-aloud button under the response to try again.', variant: 'info' });
+              },
+            });
+          }
         },
       },
       abortController.signal
@@ -385,7 +426,8 @@ export function ChatContainer() {
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.onstart = () => {
-      window.speechSynthesis?.cancel();
+      stopSpeaking();
+      setIsSpeakingReply(false);
       setIsListening(true);
     };
     recognition.onresult = (event: any) => {
@@ -407,6 +449,22 @@ export function ChatContainer() {
     recognitionRef.current = recognition;
     try { recognition.start(); }
     catch { recognitionRef.current = null; setIsListening(false); toast({ title: 'Voice input could not start', description: 'Try again or type your request.', variant: 'destructive' }); }
+  };
+
+  const toggleAutoSpeakReplies = () => {
+    if (!speechOutputAvailable) {
+      toast({ title: 'Spoken replies aren’t supported here', description: 'Try a browser that supports speech playback.', variant: 'info' });
+      return;
+    }
+    const enabled = !autoSpeakRef.current;
+    autoSpeakRef.current = enabled;
+    setAutoSpeakReplies(enabled);
+    try { window.localStorage.setItem('nexusai-auto-speak-replies', String(enabled)); } catch { /* Keep this session preference in memory. */ }
+    if (!enabled) {
+      stopSpeaking();
+      setIsSpeakingReply(false);
+    }
+    toast({ title: enabled ? 'Spoken replies on' : 'Spoken replies off', description: enabled ? 'Completed assistant replies will be read aloud.' : 'Replies will stay silent unless you choose Read aloud.' });
   };
 
   const executivePresets = [
@@ -451,6 +509,9 @@ export function ChatContainer() {
                 <div className="flex items-center gap-2">
                   <Button type="button" size="icon" variant="ghost" onClick={handleVoiceInput} disabled={isStreaming} aria-label={isListening ? 'Stop voice input' : 'Start voice input'} aria-pressed={isListening} title={!speechRecognitionAvailable ? 'Voice input is not supported in this browser' : isListening ? 'Stop listening' : 'Speak a message'} className={isListening ? 'text-primary animate-pulse' : 'text-slate-400'}><span className="relative flex"><span aria-hidden="true" className={isListening ? 'absolute inset-0 rounded-full bg-sky-400/20 animate-ping' : 'hidden'} /><span className="relative">{isListening ? <MicOff size={17} /> : <Mic size={17} />}</span></span></Button>
                   {isListening && <span role="status" aria-live="polite" className="text-xs text-sky-300">Listening… speak now</span>}
+                  <Button type="button" size="icon" variant="ghost" onClick={toggleAutoSpeakReplies} aria-label={autoSpeakReplies ? 'Turn spoken replies off' : 'Turn spoken replies on'} aria-pressed={autoSpeakReplies} title={!speechOutputAvailable ? 'Spoken replies are not supported in this browser' : autoSpeakReplies ? (isSpeakingReply ? 'Stop spoken replies' : 'Spoken replies on') : 'Enable spoken replies'} className={autoSpeakReplies ? 'text-sky-300' : 'text-slate-400'}>
+                    {autoSpeakReplies && isSpeakingReply ? <VolumeX size={17} /> : <Volume2 size={17} />}
+                  </Button>
                   <span className="text-xs text-slate-400 flex items-center gap-2"><Sparkles size={14} />Gemini<span className="hidden sm:inline text-slate-600 ml-3">Shift + Enter for a new line</span></span>
                 </div>
                 {isStreaming ? <Button size="icon" variant="secondary" onClick={handleStopExecution} aria-label="Stop response" className="rounded-full"><Square size={14} fill="currentColor" /></Button> : <Button size="icon" onClick={() => handleSendMessage()} disabled={!inputValue.trim() || !activeConvId} aria-label="Send message" className="rounded-full"><ArrowUp size={18} /></Button>}

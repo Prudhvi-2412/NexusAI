@@ -31,6 +31,7 @@ export interface ScheduledTask {
   requiresHumanApproval: boolean;
   targetMcpServers: string[];
   lastRuns?: TaskRunSummary[];
+  lastResult?: string | null;
   createdAt: string;
   updatedAt: string;
 }
