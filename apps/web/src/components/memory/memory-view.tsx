@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Memory, MemoryCategory, MemorySuggestion } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/shared/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/shared/card';
 import { Badge } from '@/components/shared/badge';
 import { Button } from '@/components/shared/button';
 import { Modal } from '@/components/shared/modal';
@@ -13,12 +13,10 @@ import {
   Plus,
   Trash2,
   Pin,
-  CheckCircle2,
   Tag,
   Clock,
   Sparkles,
   Database,
-  Filter,
   Check,
   X,
 } from 'lucide-react';
@@ -29,7 +27,7 @@ export function MemoryView() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [suggestions, setSuggestions] = useState<MemorySuggestion[]>([]);
   const [resolvingSuggestion, setResolvingSuggestion] = useState<string | null>(null);
-  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [activeCategory, setActiveCategory] = useState<MemoryCategory | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -40,15 +38,11 @@ export function MemoryView() {
   const [newCategory, setNewCategory] = useState<MemoryCategory>('preference');
   const [newTags, setNewTags] = useState('');
 
-  const loadMemories = () => {
+  useEffect(() => {
     api.getMemories({
-      category: activeCategory as any,
+      category: activeCategory,
       query: searchQuery || undefined,
     }).then(setMemories).catch(() => toast({ title: 'Could not load memories', description: 'Check that the local API is running, then try again.', variant: 'destructive' }));
-  };
-
-  useEffect(() => {
-    loadMemories();
   }, [activeCategory, searchQuery]);
 
   useEffect(() => {
@@ -228,7 +222,7 @@ export function MemoryView() {
           {categories.map((c) => (
             <button
               key={c.id}
-              onClick={() => setActiveCategory(c.id)}
+              onClick={() => setActiveCategory(c.id as MemoryCategory | 'all')}
               className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
                 activeCategory === c.id
                   ? 'bg-sky-500 text-slate-950 font-semibold shadow-sm'
@@ -370,7 +364,7 @@ export function MemoryView() {
             <label className="block text-slate-300 font-semibold mb-1">Memory Tier</label>
             <select
               value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value as any)}
+              onChange={(e) => setNewCategory(e.target.value as MemoryCategory)}
               className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-sky-500"
             >
               <option value="preference">Preference (User Rule / Constraint)</option>

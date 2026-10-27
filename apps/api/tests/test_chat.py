@@ -96,6 +96,56 @@ class ChatContractTest(unittest.TestCase):
             blocked = client.post("/api/v1/conversations", json={"title": "Should not be created"}, headers={"Origin": "https://attacker.example"})
             self.assertEqual(blocked.status_code, 403)
 
+    def test_production_action_header_rejects_form_style_mutations(self):
+        with self.authenticated_client("csrf-owner@example.com") as client:
+            with patch.object(self.main.settings, "production_mode", True):
+                rejected = client.post("/api/v1/conversations", json={"title": "Rejected"})
+                self.assertEqual(rejected.status_code, 403)
+                accepted = client.post("/api/v1/conversations", json={"title": "Accepted"}, headers={"X-Nexus-Action": "1"})
+                self.assertEqual(accepted.status_code, 201, accepted.text)
+                self.assertEqual(client.post("/api/v1/auth/logout").status_code, 403)
+                with patch.object(self.main, "rate_limit_request", return_value=17):
+                    limited = client.post("/api/v1/agent/stream", json={}, headers={"X-Nexus-Action": "1", "Origin": "http://localhost:3000"})
+                self.assertEqual(limited.status_code, 429)
+                self.assertEqual(limited.headers["retry-after"], "17")
+                self.assertEqual(limited.headers["access-control-allow-origin"], "http://localhost:3000")
+
+    def test_rate_limit_bucket_is_shared_and_actor_scoped(self):
+        with TestClient(self.main.app):
+            actor = secrets.token_hex(12)
+            self.assertIsNone(self.main.rate_limit_request("test", actor, 2, 3600))
+            self.assertIsNone(self.main.rate_limit_request("test", actor, 2, 3600))
+            self.assertGreater(self.main.rate_limit_request("test", actor, 2, 3600), 0)
+            self.assertIsNone(self.main.rate_limit_request("test", actor + "-other", 2, 3600))
+
+    def test_production_scheduled_runs_reserve_per_account_and_global_daily_budgets(self):
+        with patch.object(self.main.settings, "production_mode", True), \
+             patch.object(self.main, "rate_limit_request", side_effect=[None, None]) as reserve:
+            self.assertTrue(self.main.reserve_scheduled_run_budget("budget-owner@example.com"))
+            self.assertEqual(reserve.call_args_list[0].args, ("scheduled_run_daily", "budget-owner@example.com", 10, 86_400))
+            self.assertEqual(reserve.call_args_list[1].args, ("scheduled_run_global_daily", "all_accounts", 100, 86_400))
+        with patch.object(self.main.settings, "production_mode", True), \
+             patch.object(self.main, "rate_limit_request", return_value=10) as reserve:
+            self.assertFalse(self.main.reserve_scheduled_run_budget("budget-owner@example.com"))
+            reserve.assert_called_once()
+
+    def test_production_telegram_runs_reserve_per_account_and_global_daily_budgets(self):
+        with patch.object(self.main.settings, "production_mode", True), \
+             patch.object(self.main, "rate_limit_request", side_effect=[None, None]) as reserve:
+            self.assertTrue(self.main.reserve_telegram_run_budget("telegram-owner@example.com"))
+            self.assertEqual(reserve.call_args_list[0].args, ("telegram_run_daily", "telegram-owner@example.com", 20, 86_400))
+            self.assertEqual(reserve.call_args_list[1].args, ("telegram_run_global_daily", "all_accounts", 300, 86_400))
+
+    def test_google_login_callback_requires_start_browser_cookie(self):
+        with TestClient(self.main.app) as client:
+            with self.main.SessionLocal() as db:
+                db.add(self.main.OAuthState(state="stolen-login-state", integration_id="auth", flow="login"))
+                db.commit()
+            rejected = client.get("/api/v1/integrations/google/callback", params={"state": "stolen-login-state", "code": "irrelevant"})
+            self.assertEqual(rejected.status_code, 403)
+            with self.main.SessionLocal() as db:
+                self.assertIsNotNone(db.get(self.main.OAuthState, "stolen-login-state"))
+
     def test_users_cannot_read_or_mutate_each_others_data(self):
         with self.authenticated_client("alice@example.com") as alice:
             conversation = alice.post("/api/v1/conversations", json={"title": "Alice private"}).json()
@@ -341,7 +391,7 @@ class ChatContractTest(unittest.TestCase):
              patch.object(self.main.settings, "linkedin_client_secret", "linkedin-client-secret"), \
              patch.object(self.main.settings, "google_token_key", key.decode()), \
              patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(linkedin_response), **kwargs)), \
-             TestClient(self.main.app) as client:
+             self.authenticated_client("linkedin-callback-owner@example.com") as client:
             with self.main.SessionLocal() as db:
                 db.add(self.main.OAuthState(state="linkedin-callback-state", integration_id="app_linkedin", flow="linkedin", owner_id="linkedin-callback-owner@example.com"))
                 db.commit()
@@ -432,7 +482,12 @@ class ChatContractTest(unittest.TestCase):
 
             with patch.object(self.main.httpx, "AsyncClient", side_effect=lambda **kwargs: original_client(transport=httpx.MockTransport(instagram_response), **kwargs)):
                 with TestClient(self.main.app) as anonymous:
-                    callback = anonymous.get("/api/v1/integrations/instagram/callback", params={"state": state, "code": "oauth-code"}, follow_redirects=False)
+                    rejected = anonymous.get("/api/v1/integrations/instagram/callback", params={"state": state, "code": "oauth-code"}, follow_redirects=False)
+                    self.assertEqual(rejected.status_code, 403)
+                with self.authenticated_client("different-instagram-owner@example.com") as other:
+                    rejected = other.get("/api/v1/integrations/instagram/callback", params={"state": state, "code": "oauth-code"}, follow_redirects=False)
+                    self.assertEqual(rejected.status_code, 403)
+                callback = client.get("/api/v1/integrations/instagram/callback", params={"state": state, "code": "oauth-code"}, follow_redirects=False)
             self.assertEqual(callback.status_code, 303)
             self.assertIn("connected=instagram", callback.headers["location"])
             with self.main.SessionLocal() as db:
@@ -618,6 +673,49 @@ class ChatContractTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_action_plan({"url": "https://example.org", "actions": [{"action": "evaluate", "target": "document.cookie"}]})
 
+    def test_browser_storage_state_keeps_only_the_connected_site(self):
+        from app.browser_automation import storage_state_for_host, site_matches_host
+
+        state = {
+            "cookies": [
+                {"name": "session", "domain": ".example.org", "value": "private"},
+                {"name": "identity", "domain": ".accounts.example.net", "value": "other"},
+            ],
+            "origins": [
+                {"origin": "https://app.example.org", "localStorage": [{"name": "token", "value": "private"}]},
+                {"origin": "https://accounts.example.net", "localStorage": [{"name": "token", "value": "other"}]},
+            ],
+        }
+        scoped = storage_state_for_host(state, "example.org")
+        self.assertEqual([item["name"] for item in scoped["cookies"]], ["session"])
+        self.assertEqual([item["origin"] for item in scoped["origins"]], ["https://app.example.org"])
+        self.assertTrue(site_matches_host("example.org", "app.example.org"))
+        self.assertFalse(site_matches_host("example.org", "notexample.org"))
+
+    def test_saved_browser_site_is_encrypted_and_owner_scoped(self):
+        owner = "saved-browser-owner@example.com"
+        state = {"cookies": [{"name": "session", "domain": ".example.org", "value": "private"}], "origins": []}
+        with patch.object(self.main.settings, "google_token_key", Fernet.generate_key().decode()), \
+             patch.object(self.main.login_manager, "save", new=AsyncMock(return_value=("example.org", state))), \
+             patch.object(self.main.login_manager, "close", new=AsyncMock()):
+            with self.authenticated_client(owner) as client:
+                saved = client.post("/api/v1/browser/login/test-login/save")
+                self.assertEqual(saved.status_code, 200, saved.text)
+                site_id = saved.json()["id"]
+                self.assertEqual([item["id"] for item in client.get("/api/v1/browser/sites").json()], [site_id])
+                with self.main.SessionLocal() as db:
+                    encrypted = db.get(self.main.BrowserSiteRecord, site_id).storage_state_encrypted
+                    self.assertNotIn("private", encrypted)
+                loaded, _ = self.main.browser_site_state(owner, site_id, "https://app.example.org/page")
+                self.assertEqual(loaded, state)
+                with self.assertRaises(ValueError):
+                    self.main.browser_site_state(owner, site_id, "https://other.example.net/page")
+            with self.authenticated_client("different-browser-owner@example.com") as client:
+                self.assertEqual(client.get("/api/v1/browser/sites").json(), [])
+                self.assertEqual(client.delete(f"/api/v1/browser/sites/{site_id}").status_code, 404)
+                with self.assertRaises(ValueError):
+                    self.main.browser_site_state("different-browser-owner@example.com", site_id, "https://example.org")
+
     def test_browser_action_runs_only_after_explicit_approval(self):
         owner = "browser-approval-owner@example.com"
         approval_id = "approval_browser_action_test"
@@ -763,6 +861,7 @@ class ChatContractTest(unittest.TestCase):
                 with self.main.SessionLocal() as db:
                     db.add(self.main.OAuthState(state="signup-state", integration_id="auth", flow="login"))
                     db.commit()
+                client.cookies.set("nexus_oauth_login", "signup-state")
                 response = client.get("/api/v1/integrations/google/callback", params={"state": "signup-state", "code": "code"}, follow_redirects=False)
                 self.assertEqual(response.status_code, 303)
                 session = client.get("/api/v1/auth/session")

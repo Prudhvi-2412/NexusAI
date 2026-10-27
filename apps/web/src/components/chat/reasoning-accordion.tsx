@@ -13,7 +13,6 @@ interface ReasoningAccordionProps {
 
 export function ReasoningAccordion({
   steps,
-  agentName = 'Nexus Supervisor',
   isStreaming = false,
 }: ReasoningAccordionProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -21,7 +20,6 @@ export function ReasoningAccordion({
   if (!steps || steps.length === 0) return null;
 
   const completedCount = steps.filter((s) => s.status === 'completed').length;
-  const isFinished = completedCount === steps.length && !isStreaming;
 
   return (
     <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/40 backdrop-blur-sm overflow-hidden text-xs">

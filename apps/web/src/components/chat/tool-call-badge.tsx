@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { ToolCall } from '@/lib/api/types';
 import { Terminal, CheckCircle2, AlertCircle, Clock, ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react';
-import { cn, formatDuration } from '@/lib/utils';
+import { formatDuration } from '@/lib/utils';
 
 export function ToolCallBadge({ toolCall }: { toolCall: ToolCall }) {
   const [isOpen, setIsOpen] = useState(false);

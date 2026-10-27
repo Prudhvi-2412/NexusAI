@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { ObservabilityRun, SystemHealthSummary } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/shared/card';
+import { Card, CardContent } from '@/components/shared/card';
 import { Badge } from '@/components/shared/badge';
 import { Button } from '@/components/shared/button';
 import { Modal } from '@/components/shared/modal';
@@ -14,12 +14,8 @@ import {
   Zap,
   DollarSign,
   AlertCircle,
-  CheckCircle2,
   Terminal,
-  Cpu,
-  ShieldCheck,
   ChevronRight,
-  Filter,
 } from 'lucide-react';
 import { formatDuration, formatTimeAgo } from '@/lib/utils';
 

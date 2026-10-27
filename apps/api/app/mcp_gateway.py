@@ -21,6 +21,7 @@ from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -84,9 +85,15 @@ class MCPGateway:
         if config is None:
             raise KeyError("MCP server is not configured")
         if config.url:
+            if settings.production_mode and not config.public_only:
+                raise PermissionError("Production remote MCP servers must be validated as public HTTPS endpoints")
             if config.public_only:
                 await asyncio.to_thread(self._assert_public_https_host, config.url)
-            async with httpx.AsyncClient(headers=config.headers, timeout=30) as http_client:
+            proxy = settings.public_egress_proxy if settings.production_mode else None
+            async with httpx.AsyncClient(
+                headers=config.headers, timeout=30, proxy=proxy,
+                trust_env=not settings.production_mode,
+            ) as http_client:
                 transport = streamable_http_client(config.url, http_client=http_client)
                 async with Client(transport) as client:
                     yield client

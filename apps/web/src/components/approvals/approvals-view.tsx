@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ApprovalRequest, ApprovalImpact, ApprovalStatus } from '@/lib/api/types';
+import { ApprovalRequest, ApprovalImpact } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/shared/card';
 import { Badge } from '@/components/shared/badge';
@@ -16,10 +16,7 @@ import {
   Calendar,
   Send,
   Globe,
-  AlertTriangle,
-  ArrowRight,
   Terminal,
-  Cpu,
   Linkedin,
   Instagram,
 } from 'lucide-react';

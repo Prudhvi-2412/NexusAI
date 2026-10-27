@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Message } from '@/lib/api/types';
 import { ToolCallBadge } from './tool-call-badge';
 import { ReasoningAccordion } from './reasoning-accordion';
-import { Bot, User, ShieldAlert, ArrowRight, Volume2, VolumeX } from 'lucide-react';
+import { User, ShieldAlert, ArrowRight, Volume2, VolumeX } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { Copy, Check } from 'lucide-react';

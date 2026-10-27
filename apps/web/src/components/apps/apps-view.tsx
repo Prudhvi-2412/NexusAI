@@ -17,17 +17,15 @@ import {
   ContactRound,
   Plus,
   CheckCircle2,
-  AlertCircle,
-  ExternalLink,
   Shield,
   Terminal,
-  RefreshCw,
   Github,
   Linkedin,
   Instagram,
 } from 'lucide-react';
 import { toast } from '@/lib/hooks/use-toast';
 import { ConnectionAnimation } from '@/components/shared/connection-animation';
+import { BrowserConnection } from './browser-connection';
 
 export function AppsView() {
   const [apps, setApps] = useState<ConnectedApp[]>([]);
@@ -189,7 +187,7 @@ export function AppsView() {
                   <div className="text-[10px] text-slate-500 uppercase tracking-wider">
                     Connection
                   </div>
-                  <div className="text-slate-300">{app.type === 'browser_playwright' ? 'Isolated public-site browser; no account cookies stored' : environmentManaged
+                  <div className="text-slate-300">{app.type === 'browser_playwright' ? 'Public websites and account-owned signed-in sites' : environmentManaged
                     ? isConnected ? 'Linked to your NexusAI account' : 'Shared bot is ready for account linking'
                     : isConnected ? (app.id === 'app_gmail' ? 'Read access and approval-gated drafts enabled' : app.id === 'app_linkedin' ? 'Profile access and approval-gated posting enabled' : app.id === 'app_instagram' ? 'Professional profile and approval-gated inbox replies enabled' : 'Read-only access enabled') : 'Ready to connect'}</div>
                   {app.type === 'browser_playwright' && <div className="text-[10px] text-slate-500">Writes require your approval in Approvals.</div>}
@@ -225,7 +223,7 @@ export function AppsView() {
                   onClick={() => setSelectedApp(app)}
                   className="text-xs text-slate-400 hover:text-slate-200 font-medium"
                 >
-                  {environmentManaged ? app.type === 'browser_playwright' ? 'Usage details' : 'Setup details' : `Permissions (${app.scopes.length})`}
+                  {environmentManaged ? app.type === 'browser_playwright' ? 'Manage websites' : 'Setup details' : `Permissions (${app.scopes.length})`}
                 </button>
 
                 <Button
@@ -236,7 +234,7 @@ export function AppsView() {
                   disabled={false}
                   className="text-xs"
                 >
-                  {app.type === 'browser_playwright' ? 'Usage details' : environmentManaged ? isConnected ? 'Manage' : 'Link Telegram' : isConnected ? 'Disconnect' : 'Connect App'}
+                  {app.type === 'browser_playwright' ? 'Manage websites' : environmentManaged ? isConnected ? 'Manage' : 'Link Telegram' : isConnected ? 'Disconnect' : 'Connect App'}
                 </Button>
               </CardFooter>
             </Card>
@@ -255,9 +253,9 @@ export function AppsView() {
             : selectedApp.type === 'instagram'
               ? 'Connect your own Instagram Business or Creator account. Inbox replies always pause for your approval.'
             : selectedApp.type === 'browser_playwright'
-              ? 'A fresh, isolated browser reads public HTTPS pages. It does not store site logins or cookies.'
+              ? 'Connect a website through a short-lived sign-in browser, then reuse its encrypted site session.'
               : 'Permissions granted to NexusAI for this connection.'}
-          maxWidth="lg"
+          maxWidth={selectedApp.type === 'browser_playwright' ? '5xl' : 'lg'}
         >
           <div className="space-y-4">
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono space-y-1">
@@ -272,11 +270,7 @@ export function AppsView() {
                 <p className="text-xs text-slate-500">Set up the Meta developer app and its redirect URI before connecting. In development mode, your Instagram account must be added as an app tester; public access requires Meta review and advanced access.</p>
               </div>
             ) : selectedApp.type === 'browser_playwright' ? (
-              <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
-                <p>NexusAI can inspect visible page text, links, and form labels on public HTTPS sites.</p>
-                <p>Filling a form or clicking a page control pauses in Approvals. You can review the URL and exact actions before they run.</p>
-                <p className="text-xs text-slate-500">Private network addresses are blocked. Sign-in protected pages, CAPTCHAs, and sites that block automation may not work. The browser session is discarded after each request.</p>
-              </div>
+              <BrowserConnection />
             ) : selectedApp.type === 'telegram' ? (
               <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4">
                 {selectedApp.status === 'connected' ? (

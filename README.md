@@ -11,9 +11,18 @@ Contacts are connected by each user through Google OAuth. GitHub uses a per-user
 GitHub App authorization for read-only repositories, issues, pull requests, and
 Actions workflow runs. A shared Telegram bot supports private chats after a user
 links their Telegram ID with a short-lived code.
-Browser automation, tasks, approvals, and observability screens remain
-**interactive previews**. The older architecture sections below describe the
-target design, not implemented backend features.
+The older architecture sections below describe the original target design and
+include mock-mode examples. Use this section, the channel setup guide, and the
+[deployment readiness checklist](docs/DEPLOYMENT_READINESS.md) for the current
+backend behavior.
+
+The Browser automation connection can also save an account-owned website sign-in
+for later inspections and approved actions. Website session data is encrypted;
+see [browser setup and limits](docs/CHANNEL_SETUP.md#browser-automation-boundary).
+
+**Deployment status:** Production is not ready until the staging database RLS
+rollout, secret rotation, OAuth setup, and browser cookie checks in the
+deployment checklist are complete.
 
 ### Run locally
 
@@ -59,7 +68,7 @@ NexusAI is an autonomous AI Chief of Staff and agentic operating system designed
 
 In this foundational phase, we have established:
 1. **Production Monorepo Structure**: Full package isolation with `@nexusai/types`, `@nexusai/ui`, `@nexusai/config`, and `apps/web`.
-2. **Next.js 14 Web Command Center**: A sleek, dark-mode, developer-centric dashboard designed specifically as an AI command center and observability portal (not a generic chatbot demo).
+2. **Next.js 16 Web Command Center**: A dark-mode dashboard for agent activity and connected tools.
 3. **8 Feature-Complete Interfaces**:
    - **Agent Console (Main Chat)**: Multi-agent message stream, safe progress summaries without hidden chain-of-thought, tool execution indicators, browser speech recognition with transcript review, spoken assistant replies, stop/cancel controls, and quick prompt presets.
    - **Live Agent Activity Panel**: Real-time orchestration hierarchy, active task summaries, and step-by-step tool timeline.
@@ -79,7 +88,7 @@ In this foundational phase, we have established:
 ```text
 NexusAI/
 ├── apps/
-│   ├── web/                        # Next.js 14 App Router Frontend
+│   ├── web/                        # Next.js 16 App Router frontend
 │   │   ├── src/
 │   │   │   ├── app/                # Next.js Pages (/, /activity, /apps, /memory, /tasks, /approvals, /observability, /settings)
 │   │   │   ├── components/         # Modular UI & Feature components
@@ -145,7 +154,7 @@ NexusAI/
 ## 3. How to Run the Frontend
 
 ### Prerequisites
-- Node.js >= 18 (Tested on Node.js v22.14.0)
+- Node.js >= 20.9 (Node.js 22 recommended)
 - npm or pnpm
 
 ### Quick Start

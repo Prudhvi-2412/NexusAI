@@ -11,7 +11,7 @@ export interface ModalProps {
   description?: string;
   children: React.ReactNode;
   className?: string;
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '5xl';
 }
 
 export function Modal({
@@ -26,7 +26,7 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     function handleKeyDown(e: KeyboardEvent) {
@@ -74,6 +74,7 @@ export function Modal({
           maxWidth === 'lg' && 'max-w-lg',
           maxWidth === 'xl' && 'max-w-xl',
           maxWidth === '2xl' && 'max-w-2xl',
+          maxWidth === '5xl' && 'max-w-5xl',
           className
         )}
       >

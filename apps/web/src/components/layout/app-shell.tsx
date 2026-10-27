@@ -53,7 +53,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const title = navigation.find(item => item.href === path)?.label || 'Workspace';
   const openSearch = () => window.dispatchEvent(new Event('nexus:search'));
   const signOut = async () => {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/auth/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/auth/logout`, { method: 'POST', headers: { 'X-Nexus-Action': '1' }, credentials: 'include' });
     window.location.reload();
   };
   const nav = (compact = false) => <nav aria-label="Main navigation" className="shrink-0 space-y-1">
@@ -87,7 +87,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
       </div>
       <AnimatePresence>{mobileOpen && <motion.div className="fixed inset-0 z-40 md:hidden bg-black/60 backdrop-blur-sm" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={() => setMobileOpen(false)}>
-        <motion.aside ref={menuRef} role="dialog" aria-modal="true" aria-label="Navigation" className="h-full w-[min(320px,88vw)] bg-[#202020] p-5 overflow-y-auto" initial={{x:-320}} animate={{x:0}} exit={{x:-320}} transition={{duration:.22}} onClick={e => e.stopPropagation()}>
+        <motion.aside ref={menuRef} role="dialog" aria-modal="true" aria-label="Navigation" className="h-full w-[min(320px,88vw)] bg-[#202020] p-5 overflow-y-auto" initial={{x:-320}} animate={{x:0}} exit={{x:-320}} transition={{duration:.22}} onClick={(e: React.MouseEvent<HTMLElement>) => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-8"><div className="flex items-center gap-3"><Brand /><span className="font-semibold text-lg">NexusAI</span></div><button autoFocus onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="p-2"><X size={20} /></button></div>{nav()}
         </motion.aside>
       </motion.div>}</AnimatePresence>

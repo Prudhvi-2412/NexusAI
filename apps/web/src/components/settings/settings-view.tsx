@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { SystemSettings, ModelProvider, MCPServer, MCPServerTestResult } from '@/lib/api/types';
+import { SystemSettings, MCPServer, MCPServerTestResult } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/shared/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/shared/card';
 import { Badge } from '@/components/shared/badge';
 import { Button } from '@/components/shared/button';
 import {
@@ -12,11 +12,8 @@ import {
   Zap,
   User,
   Bell,
-  Sliders,
-  DollarSign,
   Save,
   CheckCircle2,
-  Lock,
   Server,
   KeyRound,
   Trash2,
@@ -169,7 +166,7 @@ export function SettingsView() {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => setActiveTab(tab.id as typeof activeTab)}
               className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all ${
                 isActive
                   ? 'bg-sky-500/10 text-sky-400 border border-sky-500/25 shadow-sm'
@@ -293,7 +290,7 @@ export function SettingsView() {
                       onClick={() =>
                         setSettings({
                           ...settings,
-                          guardrails: { ...settings.guardrails, autonomyLevel: level.id as any },
+                          guardrails: { ...settings.guardrails, autonomyLevel: level.id as SystemSettings['guardrails']['autonomyLevel'] },
                         })
                       }
                       className={`p-4 rounded-xl border cursor-pointer transition-all text-left ${
@@ -313,7 +310,7 @@ export function SettingsView() {
               </div>
 
               <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-400">
-                Scheduled assistant runs use the approval mode and per task setting above. Gmail drafts and browser actions require your approval; NexusAI never sends Gmail messages. Browser access is limited to public HTTPS pages and does not keep site login sessions.
+                Scheduled assistant runs use the approval mode and per task setting above. Gmail drafts and browser actions require your approval; NexusAI never sends Gmail messages. Browser access is limited to public HTTPS pages. Website sessions you connect are encrypted and stored for your account.
               </div>
 
               {/* Resource Throttling */}
@@ -506,7 +503,7 @@ export function SettingsView() {
                   onChange={(e) =>
                     setSettings({
                       ...settings,
-                      user: { ...settings.user, preferredTone: e.target.value as any },
+                      user: { ...settings.user, preferredTone: e.target.value as SystemSettings['user']['preferredTone'] },
                     })
                   }
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200"
@@ -546,7 +543,7 @@ export function SettingsView() {
               >
                 <input
                   type="checkbox"
-                  checked={(settings.notifications as any)[n.key]}
+                  checked={settings.notifications[n.key as 'notifyOnApprovalRequired' | 'notifyOnTaskFailure' | 'telegramAlerts']}
                   onChange={(e) =>
                     setSettings({
                       ...settings,

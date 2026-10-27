@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ScheduledTask, TaskStatus, CreateTaskPayload } from '@/lib/api/types';
+import { ScheduledTask, TaskStatus } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/shared/card';
+import { Card, CardContent } from '@/components/shared/card';
 import { Badge } from '@/components/shared/badge';
 import { Button } from '@/components/shared/button';
 import { Modal } from '@/components/shared/modal';
@@ -12,10 +12,7 @@ import {
   Plus,
   Play,
   Clock,
-  CheckCircle2,
-  AlertCircle,
   ShieldAlert,
-  Terminal,
   Trash2,
   ToggleLeft,
   ToggleRight,
@@ -335,7 +332,7 @@ export function TasksView() {
               <label className="block text-slate-300 font-semibold mb-1">Priority</label>
               <select
                 value={newPriority}
-                onChange={(e) => setNewPriority(e.target.value as any)}
+                onChange={(e) => setNewPriority(e.target.value as typeof newPriority)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-sky-500"
               >
                 <option value="low">Low Priority</option>

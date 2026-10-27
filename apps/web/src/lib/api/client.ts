@@ -1,6 +1,7 @@
 import {
   Agent,
   AgentRun,
+  ExecutionEventType,
   ApprovalDecisionPayload,
   ApprovalRequest,
   ConnectedApp,
@@ -34,15 +35,39 @@ import { simulateAgentStream, StreamListener } from './sse-simulator';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK_API !== 'false';
-const apiFetch: typeof fetch = (input, init = {}) => fetch(input, { ...init, credentials: 'include' });
+const EXECUTION_EVENT_TYPES = new Set<ExecutionEventType>([
+  'run:init', 'step:start', 'step:update', 'step:complete', 'agent:handoff',
+  'tool:start', 'tool:end', 'stream:chunk', 'approval:required',
+  'memory:suggestions', 'run:complete', 'run:paused', 'run:error',
+]);
+const isExecutionEventType = (value: string): value is ExecutionEventType =>
+  EXECUTION_EVENT_TYPES.has(value as ExecutionEventType);
+const apiFetch: typeof fetch = (input, init = {}) => {
+  const headers = new Headers(init.headers);
+  if (init.method && !['GET', 'HEAD', 'OPTIONS'].includes(init.method.toUpperCase())) {
+    headers.set('X-Nexus-Action', '1');
+  }
+  return fetch(input, { ...init, headers, credentials: 'include' });
+};
+
+export type BrowserSite = { id: string; host: string; createdAt: string; updatedAt: string };
+export type BrowserSnapshot = { url: string; title: string; image: string; width: number; height: number };
+async function browserResponse<T>(pending: Promise<Response>): Promise<T> {
+  const response = await pending;
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === 'string' ? body.detail : 'Browser request failed');
+  }
+  return response.json();
+}
 
 // Stateful in-memory stores for interactive mock experience
-let conversationsStore = [...MOCK_CONVERSATIONS];
-let messagesStore = [...MOCK_MESSAGES];
+const conversationsStore = [...MOCK_CONVERSATIONS];
+const messagesStore = [...MOCK_MESSAGES];
 let memoriesStore = [...MOCK_MEMORIES];
 let tasksStore = [...MOCK_TASKS];
-let approvalsStore = [...MOCK_APPROVALS];
-let integrationsStore = [...MOCK_CONNECTED_APPS];
+const approvalsStore = [...MOCK_APPROVALS];
+const integrationsStore = [...MOCK_CONNECTED_APPS];
 let settingsStore = { ...MOCK_SETTINGS };
 
 export const api = {
@@ -197,10 +222,10 @@ export const api = {
                 const data = JSON.parse(rawData);
                 if (eventType === 'stream:chunk') {
                   callbacks.onChunk(data.delta || '');
-                } else {
+                } else if (isExecutionEventType(eventType)) {
                   callbacks.onEvent({
                     runId: data.runId || 'real_run',
-                    type: eventType as any,
+                    type: eventType,
                     timestamp: new Date().toISOString(),
                     data,
                   });
@@ -460,6 +485,40 @@ export const api = {
   async unlinkTelegram(): Promise<void> {
     const res = await apiFetch(`${API_BASE_URL}/telegram/link`, { method: 'DELETE' });
     if (!res.ok) throw new Error((await res.json()).detail || 'Could not unlink Telegram');
+  },
+
+  async getBrowserSites(): Promise<BrowserSite[]> {
+    if (USE_MOCK) return [];
+    return browserResponse(apiFetch(`${API_BASE_URL}/browser/sites`));
+  },
+
+  async startBrowserLogin(url: string): Promise<{ loginId: string; snapshot: BrowserSnapshot }> {
+    if (USE_MOCK) throw new Error('Website sign-in requires the backend');
+    return browserResponse(apiFetch(`${API_BASE_URL}/browser/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+    }));
+  },
+
+  async getBrowserLogin(loginId: string): Promise<BrowserSnapshot> {
+    return browserResponse(apiFetch(`${API_BASE_URL}/browser/login/${encodeURIComponent(loginId)}`, { cache: 'no-store' }));
+  },
+
+  async interactBrowserLogin(loginId: string, action: { action: 'click' | 'type' | 'key' | 'scroll'; x?: number; y?: number; value?: string }): Promise<BrowserSnapshot> {
+    return browserResponse(apiFetch(`${API_BASE_URL}/browser/login/${encodeURIComponent(loginId)}/interact`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action),
+    }));
+  },
+
+  async saveBrowserLogin(loginId: string): Promise<BrowserSite> {
+    return browserResponse(apiFetch(`${API_BASE_URL}/browser/login/${encodeURIComponent(loginId)}/save`, { method: 'POST' }));
+  },
+
+  async cancelBrowserLogin(loginId: string): Promise<void> {
+    await browserResponse(apiFetch(`${API_BASE_URL}/browser/login/${encodeURIComponent(loginId)}`, { method: 'DELETE' }));
+  },
+
+  async deleteBrowserSite(siteId: string): Promise<void> {
+    await browserResponse(apiFetch(`${API_BASE_URL}/browser/sites/${encodeURIComponent(siteId)}`, { method: 'DELETE' }));
   },
 
   // --- Observability & Runs ---

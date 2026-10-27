@@ -22,8 +22,11 @@ class Settings(BaseSettings):
     google_token_key: str = ""
     google_auth_allowed_email: str = ""
     session_secret: str = ""
+    session_cookie_samesite: str = "lax"
+    production_mode: bool = False
     web_url: str = "http://localhost:3000"
     mcp_servers_json: str = "[]"
+    public_egress_proxy: str = ""
     telegram_bot_token: str = ""
     github_app_client_id: str = ""
     github_app_client_secret: str = ""

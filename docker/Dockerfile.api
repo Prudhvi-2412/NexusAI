@@ -1,19 +1,12 @@
-# Production Dockerfile for NexusAI FastAPI Backend (To be utilized by Codex)
-FROM python:3.11-slim
+# NexusAI FastAPI image for staging and production.
+FROM python:3.11-slim@sha256:b7a9e5f6a93d6d4a31f129bbd4bdee69efccb6ded0fb230d78aafaf37af98377
 
 WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# System dependencies for Playwright and Postgres client
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python packages
-COPY apps/api/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Install wheel-only Python packages, then Chromium and its runtime libraries.
+COPY apps/api/requirements.lock ./requirements.lock
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.lock
 RUN python -m playwright install --with-deps chromium
 
 # Copy backend application

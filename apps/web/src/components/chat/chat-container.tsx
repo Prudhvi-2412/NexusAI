@@ -1,22 +1,18 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Conversation, Message, AgentRun, ActivityStep } from '@/lib/api/types';
+import { Conversation, Message, AgentRun, ActivityStep, ToolCall, ToolCallStatus } from '@/lib/api/types';
 import { api } from '@/lib/api/client';
 import { MessageBubble } from './message-bubble';
 import { ActivityDrawer } from './activity-drawer';
 import { Button } from '@/components/shared/button';
 import {
-  Send,
   Square,
   Mic,
   MicOff,
   Activity,
   Plus,
   Sparkles,
-  Command,
-  ChevronDown,
-  Layers,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -26,6 +22,25 @@ import { motion } from 'motion/react';
 import { ArrowUp, Mail, Calendar, PenLine } from 'lucide-react';
 import { Brand } from '@/components/layout/app-shell';
 import { speakText, stopSpeaking, supportsSpeechOutput } from '@/lib/speech';
+
+type SpeechResultEvent = { resultIndex: number; results: ArrayLike<{ 0?: { transcript: string }; isFinal: boolean }> };
+type SpeechErrorEvent = { error: string };
+type SpeechRecognitionInstance = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechResultEvent) => void) | null;
+  onerror: ((event: SpeechErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+type SpeechWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionInstance;
+  webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+};
 
 export function ChatContainer() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -46,7 +61,7 @@ export function ChatContainer() {
   const [isActivityOpen, setIsActivityOpen] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const autoSpeakRef = useRef(false);
   const skipNextMessageFetchRef = useRef(false);
@@ -86,7 +101,7 @@ export function ChatContainer() {
   }, [activeConvId]);
 
   useEffect(() => {
-    const speechWindow = window as Window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
+    const speechWindow = window as SpeechWindow;
     setSpeechRecognitionAvailable(Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition));
     setSpeechOutputAvailable(supportsSpeechOutput());
     try {
@@ -186,7 +201,7 @@ export function ChatContainer() {
       {
         onEvent: (event) => {
           if (event.type === 'agent:handoff') {
-            const handoff = event.data as any;
+            const handoff = event.data as { toAgent?: string; fromAgent?: string; reason?: string };
             setActiveRun((prev) => prev ? {
               ...prev,
               steps: [...prev.steps, {
@@ -200,7 +215,7 @@ export function ChatContainer() {
               }],
             } : null);
           } else if (event.type === 'step:start') {
-            const stepData = event.data as any;
+            const stepData = event.data as { stepId?: string; name?: string; type?: ActivityStep['type']; agentName?: string; summary?: string };
             const newStep: ActivityStep = {
               id: stepData.stepId || `s_${Date.now()}`,
               name: stepData.name || 'Agent Execution',
@@ -235,7 +250,7 @@ export function ChatContainer() {
               )
             );
           } else if (event.type === 'step:complete') {
-            const stepData = event.data as any;
+            const stepData = event.data as { stepId?: string; summary?: string; durationMs?: number };
             setActiveRun((prev) => {
               if (!prev) return null;
               const updatedSteps = prev.steps.map((s) =>
@@ -266,7 +281,7 @@ export function ChatContainer() {
               )
             );
           } else if (event.type === 'tool:start') {
-            const toolData = event.data as any;
+            const toolData = event.data as { toolCall: ToolCall };
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMsgId
@@ -278,7 +293,7 @@ export function ChatContainer() {
               )
             );
           } else if (event.type === 'tool:end') {
-            const toolData = event.data as any;
+            const toolData = event.data as { toolCallId: string; status: ToolCallStatus; durationMs?: number };
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMsgId
@@ -322,7 +337,7 @@ export function ChatContainer() {
               : m));
             toast({ title: 'Gemini request failed', description: runData.error || 'Unknown error', variant: 'destructive' });
           } else if (event.type === 'run:complete') {
-            const runData = event.data as any;
+            const runData = event.data as { durationMs?: number; tokenUsage?: AgentRun['tokenUsage'] };
             setActiveRun((prev) =>
               prev
                 ? {
@@ -415,7 +430,7 @@ export function ChatContainer() {
       recognitionRef.current.stop();
       return;
     }
-    const speechWindow = window as Window & { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
+    const speechWindow = window as SpeechWindow;
     const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
     if (!Recognition) {
       toast({ title: 'Voice input isn’t supported here', description: 'Try a browser with Web Speech recognition, or type your request.', variant: 'info' });
@@ -430,7 +445,7 @@ export function ChatContainer() {
       setIsSpeakingReply(false);
       setIsListening(true);
     };
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechResultEvent) => {
       for (let index = event.resultIndex; index < event.results.length; index++) {
         const part = event.results[index][0]?.transcript || '';
         if (event.results[index].isFinal && part.trim()) {
@@ -438,7 +453,7 @@ export function ChatContainer() {
         }
       }
     };
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechErrorEvent) => {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         toast({ title: 'Microphone access is blocked', description: 'Allow microphone access for this site in your browser, then try again.', variant: 'destructive' });
       } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
