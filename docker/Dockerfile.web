@@ -10,15 +10,19 @@ COPY packages/ui/package.json ./packages/ui/
 COPY packages/config/package.json ./packages/config/
 COPY apps/web/package.json ./apps/web/
 
-RUN npm install
+RUN npm ci
 
 # Rebuild source code only when needed
 FROM base AS builder
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ARG NEXT_PUBLIC_USE_MOCK_API=false
+ARG NEXT_PUBLIC_FREE_TIER_DEMO=false
+ARG NEXUS_API_ORIGIN
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_USE_MOCK_API=$NEXT_PUBLIC_USE_MOCK_API
+ENV NEXT_PUBLIC_FREE_TIER_DEMO=$NEXT_PUBLIC_FREE_TIER_DEMO
+ENV NEXUS_API_ORIGIN=$NEXUS_API_ORIGIN
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 

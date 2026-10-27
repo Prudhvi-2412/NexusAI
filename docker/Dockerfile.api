@@ -8,15 +8,22 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY apps/api/requirements.lock ./requirements.lock
 RUN pip install --no-cache-dir --only-binary=:all: -r requirements.lock
 RUN python -m playwright install --with-deps chromium
+RUN apt-get update && apt-get install -y --no-install-recommends squid \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy backend application
 COPY apps/api /app
+COPY docker/squid.conf /etc/squid/squid.conf
+COPY docker/proxy_supervisor.py /app/proxy_supervisor.py
+COPY docker/verify_egress_proxy.py /app/verify_egress_proxy.py
 
 RUN groupadd --system nexusai && useradd --system --gid nexusai --home-dir /home/nexusai --create-home nexusai \
-    && chown -R nexusai:nexusai /app
+    && mkdir -p /var/spool/squid /var/log/squid \
+    && chown -R nexusai:nexusai /app /var/spool/squid /var/log/squid \
+    && squid -k parse -f /etc/squid/squid.conf
 
 USER nexusai
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+CMD ["python", "/app/proxy_supervisor.py"]

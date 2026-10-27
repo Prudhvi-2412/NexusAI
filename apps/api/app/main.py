@@ -251,6 +251,8 @@ async def lifespan(_: FastAPI):
         raise RuntimeError("SESSION_COOKIE_SAMESITE must be lax, strict, or none")
     if settings.session_cookie_samesite == "none" and not settings.web_url.startswith("https://"):
         raise RuntimeError("SameSite=None requires an HTTPS web URL")
+    if settings.production_mode and settings.free_tier_demo_mode and not settings.google_auth_allowed_email.strip():
+        raise RuntimeError("FREE_TIER_DEMO_MODE requires GOOGLE_AUTH_ALLOWED_EMAIL to restrict sign-in")
     if settings.production_mode:
         if engine.dialect.name != "postgresql" or not settings.rls_enforcement:
             raise RuntimeError("Production requires PostgreSQL and RLS_ENFORCEMENT=true")
@@ -509,6 +511,17 @@ async def require_authenticated_account(request: Request, call_next):
             and (path not in PUBLIC_API_PATHS or path == "/api/v1/auth/logout")
             and request.headers.get("x-nexus-action") != "1"):
         return middleware_error(request, "Missing action header", 403)
+    if settings.free_tier_demo_mode:
+        blocked_prefixes = (
+            "/api/v1/browser", "/api/v1/mcp", "/api/v1/google", "/api/v1/github",
+            "/api/v1/telegram", "/api/v1/integrations",
+        )
+        is_integration_list = path == "/api/v1/integrations" and request.method == "GET"
+        is_google_callback = path == "/api/v1/integrations/google/callback"
+        if not is_integration_list and not is_google_callback and any(
+            path == prefix or path.startswith(prefix + "/") for prefix in blocked_prefixes
+        ):
+            return middleware_error(request, "External connections are disabled in the synthetic-data demo", 403)
     if settings.production_mode and request.method == "GET" and path == "/api/v1/auth/google/start":
         remote = request.client.host if request.client else "unknown"
         retry_after = rate_limit_request("oauth_start", remote, 20, 600)
@@ -798,6 +811,8 @@ def mcp_gateway() -> MCPGateway:
 
 
 def mcp_gateway_for_account(account: str) -> MCPGateway:
+    if settings.free_tier_demo_mode:
+        return MCPGateway([])
     servers: list[MCPServerConfig] = []
     service_owner = settings.google_auth_allowed_email.strip().casefold()
     if account == service_owner:
@@ -2571,6 +2586,12 @@ def integrations(db: Session = Depends(get_db)):
         ],
         "toolsProvided": ["browser_inspect_page", "browser_perform_actions"],
     })
+    if settings.free_tier_demo_mode:
+        for item in items:
+            item["status"] = "disconnected"
+            item["toolsProvided"] = []
+            item["accountHandle"] = None
+            item["description"] += " (disabled in the synthetic-data demo)"
     return items
 
 
@@ -2646,6 +2667,8 @@ async def google_callback(request: Request, state: str, code: str, db: Session =
     saved_state = db.get(OAuthState, state)
     if saved_state is None:
         raise HTTPException(400, "Invalid OAuth state")
+    if settings.free_tier_demo_mode and saved_state.flow != "login":
+        raise HTTPException(403, "Google account integrations are disabled in the synthetic-data demo")
     if saved_state.flow == "login":
         cookie_state = request.cookies.get("nexus_oauth_login", "")
         if not cookie_state or not secrets.compare_digest(cookie_state, state):
@@ -2686,6 +2709,9 @@ async def google_callback(request: Request, state: str, code: str, db: Session =
         email = str(identity.get("email", "")).strip().casefold()
         if not identity.get("email_verified") or not email:
             raise HTTPException(403, "Sign-in requires a verified Google account")
+        if (settings.free_tier_demo_mode
+                and email != settings.google_auth_allowed_email.strip().casefold()):
+            raise HTTPException(403, "This demo is restricted to its configured Google account")
         current_owner.set(email)
         raw_session = secrets.token_urlsafe(48)
         db.add(AuthSession(
@@ -3441,44 +3467,51 @@ async def stream_agent(payload: StreamRequest, db: Session = Depends(get_db)):
         run_paused = False
         yield sse("run:init", {"runId": run_id, "agentName": "Nexus Supervisor", "status": "running", "resumed": resuming})
         tool_context = []
-        if agent_graph is None:
-            yield sse("run:error", {"runId": run_id, "error": "Agent workflow is unavailable. Please retry."})
-            return
-        graph_config = {"configurable": {"thread_id": run_id}, "metadata": {"owner_id": owner_id(), "conversation_id": conversation.id}}
-        try:
-            graph_input = None if resuming else {"owner_id": account, "run_id": run_id, "message": payload.message, "findings": []}
-            async for item in agent_graph.astream(
-                graph_input,
-                graph_config, stream_mode=["updates", "custom"], version="v2",
-            ):
-                if item["type"] == "custom":
-                    event = item["data"]
-                    yield sse(event["type"], event["data"])
-            checkpoint = await agent_graph.aget_state(graph_config)
-            for finding in checkpoint.values.get("findings", []):
-                tool_context.append(f"{finding['agent']} / {finding['tool']}: {json.dumps(finding['result'], ensure_ascii=False)}")
-        except Exception as exc:
-            log.exception("Specialist graph failed (%s)", type(exc).__name__)
-            yield sse("run:error", {"runId": run_id, "error": "Agent workflow failed. Please retry."})
-            return
-        mcp = mcp_gateway_for_account(owner_id())
-        available_mcp_tools = await mcp.list_tools()
+        if not settings.free_tier_demo_mode:
+            if agent_graph is None:
+                yield sse("run:error", {"runId": run_id, "error": "Agent workflow is unavailable. Please retry."})
+                return
+            graph_config = {"configurable": {"thread_id": run_id}, "metadata": {"owner_id": owner_id(), "conversation_id": conversation.id}}
+            try:
+                graph_input = None if resuming else {"owner_id": account, "run_id": run_id, "message": payload.message, "findings": []}
+                async for item in agent_graph.astream(
+                    graph_input,
+                    graph_config, stream_mode=["updates", "custom"], version="v2",
+                ):
+                    if item["type"] == "custom":
+                        event = item["data"]
+                        yield sse(event["type"], event["data"])
+                checkpoint = await agent_graph.aget_state(graph_config)
+                for finding in checkpoint.values.get("findings", []):
+                    tool_context.append(f"{finding['agent']} / {finding['tool']}: {json.dumps(finding['result'], ensure_ascii=False)}")
+            except Exception as exc:
+                log.exception("Specialist graph failed (%s)", type(exc).__name__)
+                yield sse("run:error", {"runId": run_id, "error": "Agent workflow failed. Please retry."})
+                return
+        available_mcp_tools = []
+        if not settings.free_tier_demo_mode:
+            mcp = mcp_gateway_for_account(owner_id())
+            available_mcp_tools = await mcp.list_tools()
         if current_task_id.get() is not None:
             # Scheduled directives are read-only. Do not even expose write tools
             # to the model; approval-gated chat actions belong in interactive runs.
             available_mcp_tools = filter_scheduled_task_tools(available_mcp_tools)
-        with SessionLocal() as browser_db:
-            browser_sites = [browser_site_json(row) for row in browser_db.scalars(
-                select(BrowserSiteRecord).where(BrowserSiteRecord.owner_id == owner_id()).order_by(BrowserSiteRecord.updated_at.desc())
-            ).all()]
-        available_mcp_tools.extend(browser_tool_definitions(include_actions=current_task_id.get() is None, sites=browser_sites))
-        with SessionLocal() as scope_db:
-            gmail_credential = scope_db.get(GoogleCredential, owner_id())
-            gmail_scopes = set((gmail_credential.scope if gmail_credential else "").split())
-            linkedin_credential = scope_db.get(LinkedInCredential, owner_id())
-            linkedin_scopes = set((linkedin_credential.scope if linkedin_credential else "").split())
-            instagram_credential = scope_db.get(InstagramCredential, owner_id())
-            instagram_scopes = set((instagram_credential.scope if instagram_credential else "").split())
+        if not settings.free_tier_demo_mode:
+            with SessionLocal() as browser_db:
+                browser_sites = [browser_site_json(row) for row in browser_db.scalars(
+                    select(BrowserSiteRecord).where(BrowserSiteRecord.owner_id == owner_id()).order_by(BrowserSiteRecord.updated_at.desc())
+                ).all()]
+            available_mcp_tools.extend(browser_tool_definitions(include_actions=current_task_id.get() is None, sites=browser_sites))
+            with SessionLocal() as scope_db:
+                gmail_credential = scope_db.get(GoogleCredential, owner_id())
+                gmail_scopes = set((gmail_credential.scope if gmail_credential else "").split())
+                linkedin_credential = scope_db.get(LinkedInCredential, owner_id())
+                linkedin_scopes = set((linkedin_credential.scope if linkedin_credential else "").split())
+                instagram_credential = scope_db.get(InstagramCredential, owner_id())
+                instagram_scopes = set((instagram_credential.scope if instagram_credential else "").split())
+        else:
+            gmail_credential = linkedin_credential = instagram_credential = None
+            gmail_scopes = linkedin_scopes = instagram_scopes = set()
         gmail_compose_scope = "https://www.googleapis.com/auth/gmail.compose"
         if current_task_id.get() is None and gmail_compose_scope in gmail_scopes:
             available_mcp_tools.append({

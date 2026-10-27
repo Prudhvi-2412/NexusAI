@@ -3,6 +3,10 @@
 This is a release checklist, not evidence of a deployed service. Run it against
 an isolated staging database before making the application public.
 
+For a $0 personal demonstration, use [FREE_TIER_DEMO.md](FREE_TIER_DEMO.md)
+instead. Free hosting and Gemini use have restrictions that make them unsuitable
+for a real-user production service.
+
 ## Required configuration
 
 - Use Node.js 20.9 or newer for the Next.js web build. Set the Vercel root to
@@ -56,10 +60,12 @@ an isolated staging database before making the application public.
   dollar amount. Telegram model and voice requests are bounded to 20 per
   account and 300 globally per UTC day; embedding requests are limited to 60
   per account per hour and 1,000 globally per UTC day.
-- Set `PUBLIC_EGRESS_PROXY` in production. Its ACL must block private, loopback,
+- The API image runs a loopback-only Squid proxy on `127.0.0.1:3128`; use
+  `PUBLIC_EGRESS_PROXY=http://127.0.0.1:3128`. Its ACL denies private, loopback,
   link-local, multicast, reserved, and cloud metadata destinations after DNS
-  resolution. Browser automation and remote MCP traffic route through it. Keep
-  the proxy configuration and ACL under review before accepting untrusted users.
+  resolution. Browser automation and remote MCP traffic use this proxy. Do not
+  expose port 3128 publicly. Run the proxy verification script after building
+  the image and repeat the check against the deployed service before use.
 - The API Dockerfile installs pinned versions from `apps/api/requirements.lock`,
   captured from the test image. Review dependency advisories and regenerate the
   lockfile deliberately when upgrading; `requirements.txt` remains the
