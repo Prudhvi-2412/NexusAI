@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     session_secret: str = ""
     session_cookie_samesite: str = "lax"
     production_mode: bool = False
+    free_tier_demo_mode: bool = False
     web_url: str = "http://localhost:3000"
     mcp_servers_json: str = "[]"
     public_egress_proxy: str = ""

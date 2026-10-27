@@ -1,0 +1,59 @@
+# Free, single-user synthetic-data demo. Keep the existing Neon database out
+# of this Blueprint; DATABASE_URL must be a fresh DB's nexusai_app role URL.
+services:
+  - type: web
+    name: nexusai-api-demo
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./docker/Dockerfile.api
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_AUTH_ALLOWED_EMAIL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GOOGLE_TOKEN_KEY
+        generateValue: true
+      - key: PRODUCTION_MODE
+        value: "true"
+      - key: RLS_ENFORCEMENT
+        value: "true"
+      - key: FREE_TIER_DEMO_MODE
+        value: "true"
+      - key: PUBLIC_EGRESS_PROXY
+        value: http://127.0.0.1:3128
+      - key: WEB_URL
+        value: https://nexusai-web-demo.onrender.com
+      - key: CORS_ORIGINS
+        value: https://nexusai-web-demo.onrender.com
+      - key: GOOGLE_REDIRECT_URI
+        value: https://nexusai-web-demo.onrender.com/api/v1/integrations/google/callback
+      - key: SESSION_COOKIE_SAMESITE
+        value: lax
+
+  - type: web
+    name: nexusai-web-demo
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./docker/Dockerfile.web
+    dockerContext: .
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: /api/v1
+      - key: NEXT_PUBLIC_USE_MOCK_API
+        value: "false"
+      - key: NEXT_PUBLIC_FREE_TIER_DEMO
+        value: "true"
+      - key: NEXUS_API_ORIGIN
+        value: https://nexusai-api-demo.onrender.com
