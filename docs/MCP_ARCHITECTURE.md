@@ -1,6 +1,6 @@
 # NexusAI Model Context Protocol (MCP) Architecture
 
-> **Implementation status (2026-10-07):** The API has a per-account MCP gateway for remote public HTTPS servers configured in Settings, plus optional operator-managed stdio/HTTP servers from `MCP_SERVERS_JSON` available only to the configured service owner. User bearer tokens are Fernet-encrypted at rest, account queries are owner-scoped, and private/reserved DNS targets are rejected before connecting. Tool discovery runs at request time; read-only tools can run directly and write or unannotated tools enter the durable approval flow. Editing a server URL changes its internal identity, so approvals staged for the previous URL fail closed. Google Gmail and Calendar remain account-scoped direct API adapters. See `CHANNEL_SETUP.md` for the setup and security boundaries.
+> **Implementation status (2026-10-30):** The API has a per-account MCP gateway for remote public HTTPS servers configured in Settings, plus optional operator-managed stdio/HTTP servers from `MCP_SERVERS_JSON` available only to the configured service owner. User bearer tokens are Fernet-encrypted at rest, account queries are owner-scoped, and private/reserved DNS targets are rejected before connecting. Tool discovery runs at request time; all remote tools enter the durable approval flow regardless of server annotations. Locally configured stdio tools may run directly when marked read-only. Approvals are bound to the tool name, description, and input schema. Editing a server URL changes its internal identity, so approvals staged for the previous URL fail closed. Google Gmail and Calendar remain account-scoped direct API adapters. See `CHANNEL_SETUP.md` for the setup and security boundaries.
 
 NexusAI leverages the **Model Context Protocol (MCP)** developed by Anthropic as an open standard to connect the agent orchestration layer to third-party tools, data sources, and execution sandboxes.
 
@@ -108,7 +108,7 @@ class McpToolInterceptor:
 ## 4. Current Implementation and Next Work
 
 - Per-account HTTPS MCP connector management is available under Settings → MCP connectors. The API stores endpoint metadata and encrypted bearer credentials under the signed-in owner.
-- Tool discovery is live. A connector can be tested from Settings; discovered read-only tools can run directly, while write or unannotated tools require approval.
+- Tool discovery is live. A connector can be tested from Settings; all remote tools require approval. A server's read-only hint is informational and cannot grant direct execution.
 - Operator `MCP_SERVERS_JSON` configuration remains available to the configured service owner, including stdio fixture servers.
 - User-configured stdio processes, connector OAuth flows, richer auth schemes, and distributed connection pooling are not implemented.
 - Remote DNS is checked before connection to reject loopback, private, and reserved addresses. Deployments should still apply network egress controls at the container/network layer.

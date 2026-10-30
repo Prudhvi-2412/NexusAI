@@ -1606,7 +1606,9 @@ async def execute_approved_mcp(account: str, server: str, tool: str, arguments: 
                 success = bool(result.get("success"))
                 message = result.get("message", "Browser actions completed.")
             else:
-                result = await mcp_gateway_for_account(account).call_approved_tool(server, tool, arguments)
+                result = await mcp_gateway_for_account(account).call_approved_tool(
+                    server, tool, arguments, reviewed.get("definitionHash") if isinstance(reviewed, dict) else None,
+                )
                 success = not result.get("isError")
                 message = "Connector action completed." if success else "Connector reported that the action failed."
         except Exception as exc:
@@ -3720,7 +3722,11 @@ async def stream_agent(payload: StreamRequest, db: Session = Depends(get_db)):
                                             if args_recipient_id not in participant_ids or instagram_token_row.instagram_user_id not in participant_ids:
                                                 raise ValueError("Instagram conversation and recipient must come from this connected account's conversation")
                                         encoded_arguments = json.dumps(arguments, ensure_ascii=False, allow_nan=False)
-                                        if not explicit_action or len(encoded_arguments) > 12000:
+                                        built_in_action = (server_name, tool_name) in {
+                                            ("google", "gmail_create_draft"), ("linkedin", "create_post"),
+                                            ("instagram", "send_message"), ("browser", "perform_actions"),
+                                        }
+                                        if (built_in_action and not explicit_action) or len(encoded_arguments) > 12000:
                                             raise ValueError("Write request was not explicit or exceeded the review size limit")
                                         if action_graph is None:
                                             raise RuntimeError("Approval workflow is unavailable")
@@ -3730,7 +3736,7 @@ async def stream_agent(payload: StreamRequest, db: Session = Depends(get_db)):
                                             impact="high", title=f"Review {tool_name}",
                                             explanation=("Approving saves this message to your Gmail Drafts folder; NexusAI will not send it." if server_name == "google" and tool_name == "gmail_create_draft" else "Approving publishes this exact text to your LinkedIn feed." if server_name == "linkedin" and tool_name == "create_post" else "Approving sends this exact reply to the specified participant in the reviewed Instagram conversation." if server_name == "instagram" and tool_name == "send_message" else "Approving runs the exact browser steps shown below on the reviewed website." if server_name == "browser" else "NexusAI requested this connector action. Review the exact arguments below; nothing runs until you approve it."),
                                             service=server_name, action=("gmail_draft" if server_name == "google" and tool_name == "gmail_create_draft" else "mcp_tool"), target=tool_name,
-                                            parameters={"tool": tool_name, "arguments": arguments},
+                                            parameters={"tool": tool_name, "arguments": arguments, "definitionHash": manifest.get("definitionHash")},
                                             expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                                         )
                                         await action_graph.ainvoke(

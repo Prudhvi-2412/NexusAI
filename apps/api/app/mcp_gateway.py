@@ -1,7 +1,7 @@
 """Environment-configured MCP client gateway.
 
-Only explicitly configured servers can be reached. Tools must declare the
-MCP readOnlyHint for direct invocation; all other tools remain approval-gated.
+Only explicitly configured servers can be reached. Remote tool annotations are
+untrusted and cannot grant permission to execute without approval.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import ipaddress
 import re
 import socket
 import asyncio
+import hashlib
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit
@@ -126,9 +127,21 @@ class MCPGateway:
             raise ValueError("MCP remote servers cannot resolve to private or reserved network addresses")
 
     @staticmethod
-    def _tool_json(server: str, tool: Any) -> dict:
+    def tool_definition_hash(tool: Any) -> str:
+        definition = {
+            "name": tool.name,
+            "description": getattr(tool, "description", None) or "",
+            "inputSchema": getattr(tool, "input_schema", None) or {"type": "object", "properties": {}},
+        }
+        canonical = json.dumps(definition, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode()).hexdigest()
+
+    def _tool_json(self, server: str, tool: Any) -> dict:
         annotations = getattr(tool, "annotations", None)
-        read_only = bool(getattr(annotations, "read_only_hint", False))
+        hint = bool(getattr(annotations, "read_only_hint", False))
+        # Only locally configured stdio tools retain the existing behavior.
+        # Any remote server controls its own annotations, so its hint is display-only.
+        read_only = hint and self.servers[server].command is not None
         return {
             "name": f"{server}__{tool.name}",
             "server": server,
@@ -136,6 +149,8 @@ class MCPGateway:
             "title": getattr(tool, "title", None),
             "description": getattr(tool, "description", None) or "",
             "inputSchema": getattr(tool, "input_schema", None) or {"type": "object", "properties": {}},
+            "definitionHash": self.tool_definition_hash(tool),
+            "readOnlyHint": hint,
             "readOnly": read_only,
             "requiresApproval": not read_only,
         }
@@ -155,6 +170,11 @@ class MCPGateway:
         return found
 
     async def call_read_tool(self, server: str, tool_name: str, arguments: dict[str, Any]) -> dict:
+        config = self.servers.get(server)
+        if config is None:
+            raise KeyError("MCP server is not configured")
+        if config.url:
+            raise PermissionError("Remote MCP tools require user approval before execution")
         async with self.connect(server) as client:
             tools = await client.list_tools()
             tool = next((item for item in tools.tools if item.name == tool_name), None)
@@ -173,15 +193,15 @@ class MCPGateway:
                 "structuredContent": getattr(result, "structured_content", None),
             }
 
-    async def call_approved_tool(self, server: str, tool_name: str, arguments: dict[str, Any]) -> dict:
+    async def call_approved_tool(self, server: str, tool_name: str, arguments: dict[str, Any], definition_hash: str | None = None) -> dict:
         """Execute a write-capable tool after the caller has verified an approval."""
         async with self.connect(server) as client:
             tools = await client.list_tools()
             tool = next((item for item in tools.tools if item.name == tool_name), None)
             if tool is None:
                 raise KeyError("Approved MCP tool is no longer available")
-            if bool(getattr(getattr(tool, "annotations", None), "read_only_hint", False)):
-                raise PermissionError("Tool permissions changed after approval; request approval again")
+            if not definition_hash or self.tool_definition_hash(tool) != definition_hash:
+                raise PermissionError("Tool definition changed after approval; request approval again")
             result = await client.call_tool(tool_name, arguments)
             return {
                 "isError": bool(result.is_error),

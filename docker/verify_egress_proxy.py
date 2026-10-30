@@ -28,7 +28,12 @@ async def main() -> None:
             raise RuntimeError("Squid did not start")
 
         urls = (
+            "http://0.0.0.0/",
+            "http://0.0.0.1/",
             "http://127.0.0.1/",
+            "http://[::ffff:0.0.0.1]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:10.0.0.1]/",
             "https://169.254.169.254/latest/meta-data/",
             "http://rebind-test.example/",
         )
