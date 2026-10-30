@@ -810,6 +810,12 @@ def mcp_gateway() -> MCPGateway:
         raise HTTPException(503, "MCP server configuration is invalid") from exc
 
 
+def mcp_server_alias(row: MCPServerRecord) -> str:
+    # A pending approval must not survive a URL or credential change.
+    identity = json.dumps([row.id, row.url, row.token_encrypted], separators=(",", ":"))
+    return "u" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+
+
 def mcp_gateway_for_account(account: str) -> MCPGateway:
     if settings.free_tier_demo_mode:
         return MCPGateway([])
@@ -833,9 +839,7 @@ def mcp_gateway_for_account(account: str) -> MCPGateway:
                     log.error("Could not decrypt user MCP credential for account %s", account)
                     raise HTTPException(503, "A saved MCP credential could not be decrypted") from exc
                 headers["Authorization"] = f"Bearer {token}"
-            # URL is part of the alias so any approval staged for the old endpoint fails closed after edits.
-            endpoint_fingerprint = hashlib.sha256(f"{row.id}:{row.url}".encode()).hexdigest()[:10]
-            alias = f"u{endpoint_fingerprint}"
+            alias = mcp_server_alias(row)
             servers.append(MCPServerConfig(name=alias, url=row.url, headers=headers, public_only=True))
     return MCPGateway(servers)
 
@@ -1201,9 +1205,8 @@ async def test_user_mcp_server(server_id: str, db: Session = Depends(get_db)):
     if row is None:
         raise HTTPException(404, "MCP connector not found")
     gateway = mcp_gateway_for_account(account)
-    endpoint_fingerprint = hashlib.sha256(f"{row.id}:{row.url}".encode()).hexdigest()[:10]
     try:
-        tools = await gateway.list_server_tools(f"u{endpoint_fingerprint}")
+        tools = await gateway.list_server_tools(mcp_server_alias(row))
     except Exception as exc:
         log.warning("User MCP connection check failed for %s (%s)", account, type(exc).__name__)
         raise HTTPException(502, "Could not connect to this MCP server. Check its public HTTPS URL, token, and availability.") from exc

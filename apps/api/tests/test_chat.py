@@ -321,8 +321,16 @@ class ChatContractTest(unittest.TestCase):
                     self.assertNotEqual(record.token_encrypted, "private-test-token")
                     self.assertEqual(Fernet(encryption_key.encode()).decrypt(record.token_encrypted.encode()).decode(), "private-test-token")
                 gateway = self.main.mcp_gateway_for_account("mcp-alice@example.com")
+                old_alias = next(iter(gateway.servers))
                 config = next(iter(gateway.servers.values()))
                 self.assertEqual(config.headers["Authorization"], "Bearer private-test-token")
+                rotated = alice.put(f"/api/v1/mcp/servers/{server_id}", json={
+                    "name": "project-tools", "url": "https://mcp.example.com/mcp", "token": "rotated-test-token",
+                })
+                self.assertEqual(rotated.status_code, 200, rotated.text)
+                rotated_gateway = self.main.mcp_gateway_for_account("mcp-alice@example.com")
+                self.assertNotIn(old_alias, rotated_gateway.servers)
+                self.assertEqual(next(iter(rotated_gateway.servers.values())).headers["Authorization"], "Bearer rotated-test-token")
             with self.authenticated_client("mcp-bob@example.com") as bob:
                 self.assertEqual(bob.get("/api/v1/mcp/servers").json(), [])
                 self.assertEqual(bob.delete(f"/api/v1/mcp/servers/{server_id}").status_code, 404)
