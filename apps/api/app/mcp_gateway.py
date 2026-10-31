@@ -25,6 +25,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.config import settings
 
 log = logging.getLogger(__name__)
+MAX_TOOLS_PER_SERVER = 50
+MAX_TOOL_SCHEMA_BYTES = 16_384
 
 
 class MCPServerConfig(BaseModel):
@@ -142,13 +144,16 @@ class MCPGateway:
         # Only locally configured stdio tools retain the existing behavior.
         # Any remote server controls its own annotations, so its hint is display-only.
         read_only = hint and self.servers[server].command is not None
+        schema = getattr(tool, "input_schema", None) or {"type": "object", "properties": {}}
+        if len(json.dumps(schema, separators=(",", ":"), ensure_ascii=False).encode()) > MAX_TOOL_SCHEMA_BYTES:
+            raise ValueError("MCP tool input schema exceeds the size limit")
         return {
             "name": f"{server}__{tool.name}",
             "server": server,
             "tool": tool.name,
             "title": getattr(tool, "title", None),
             "description": getattr(tool, "description", None) or "",
-            "inputSchema": getattr(tool, "input_schema", None) or {"type": "object", "properties": {}},
+            "inputSchema": schema,
             "definitionHash": self.tool_definition_hash(tool),
             "readOnlyHint": hint,
             "readOnly": read_only,
@@ -158,6 +163,8 @@ class MCPGateway:
     async def list_server_tools(self, name: str) -> list[dict]:
         async with self.connect(name) as client:
             result = await client.list_tools()
+            if len(result.tools) > MAX_TOOLS_PER_SERVER:
+                raise ValueError("MCP server returned too many tools")
             return [self._tool_json(name, item) for item in result.tools]
 
     async def list_tools(self) -> list[dict]:
