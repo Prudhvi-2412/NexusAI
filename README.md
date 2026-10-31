@@ -1,225 +1,97 @@
-# NexusAI: Autonomous AI Chief of Staff & Agentic OS
+# NexusAI
 
-GitHub setup, least-privilege permissions, and test prompts are documented in [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
+NexusAI is a self-hostable AI assistant with a web chat, account-scoped connections, long-term memory, scheduled tasks, and an approval center. Users sign in with their own Google account, then connect only the services they want to use.
 
-## Current implementation
+## What each user can connect
 
-The web chat connects to FastAPI with persisted, account-scoped conversations,
-Gemini streaming, and verified Google sign-in. Each account has its own memories
-and encrypted Google and GitHub credentials. Gmail, Calendar, Classroom, and
-Contacts are connected by each user through Google OAuth. GitHub uses a per-user
-GitHub App authorization for read-only repositories, issues, pull requests, and
-Actions workflow runs. A shared Telegram bot supports private chats after a user
-links their Telegram ID with a short-lived code.
-The older architecture sections below describe the original target design and
-include mock-mode examples. Use this section, the channel setup guide, and the
-[deployment readiness checklist](docs/DEPLOYMENT_READINESS.md) for the current
-backend behavior.
+| Service | What it does | Account and permission notes |
+| --- | --- | --- |
+| Google / Gmail | Sign in; summarize unread Gmail; read Calendar, Classroom, and Contacts when connected; save Gmail drafts after approval | Every user authorizes their own Google account. Gmail is read-only unless the user separately grants compose access. NexusAI saves drafts but never sends them. |
+| GitHub | Read repositories, issues, pull requests, and Actions workflow runs | Each user authorizes their own GitHub account. Access is read-only and limited by the GitHub App installation. |
+| LinkedIn | Read the connected member profile and publish a post after approval | Each user authorizes their own LinkedIn account. Feed, messages, and organization posting are not supported. |
+| Instagram | Read a professional profile and recent conversations; send a requested reply after approval | Each user authorizes their own Business or Creator account. The other participant must have messaged the account first. Personal accounts are unsupported. |
+| Telegram | Send chat or voice messages to the shared bot | The operator configures one bot. Each user links their own Telegram ID using an expiring one-time code. |
+| Browser | Inspect public HTTPS pages and save a website sign-in for later inspections and approved actions | Each user controls their own saved website sessions. Local and private network destinations are blocked. |
+| Custom MCP | Add an account-owned remote tool server | Each user supplies their own public HTTPS endpoint and optional bearer token. Remote tool calls require approval. |
 
-The Browser automation connection can also save an account-owned website sign-in
-for later inspections and approved actions. Website session data is encrypted;
-see [browser setup and limits](docs/CHANNEL_SETUP.md#browser-automation-boundary).
+## Run NexusAI locally
 
-**Deployment status:** Production is not ready until the staging database RLS
-rollout, secret rotation, OAuth setup, and browser cookie checks in the
-deployment checklist are complete.
+### Requirements
 
-### Run locally
+- Docker Desktop with Docker Compose
+- A Gemini API key for live chat
+- A Google OAuth web client for sign-in
 
-1. Copy `docker/.env.docker.example` to `docker/.env` and set `DATABASE_URL`,
-   `GEMINI_API_KEY`, the Google OAuth values, `GOOGLE_AUTH_ALLOWED_EMAIL` (the
-   original owner used to backfill existing records and limit deployment-wide
-   MCP tools), and a random `SESSION_SECRET` (for example, generate one with
-   `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
-2. From the repository root, run `docker compose --env-file docker/.env -f docker/docker-compose.yml up --build`.
-3. Open `http://localhost:3000`. The API health endpoint is `http://localhost:8000/health`.
+### Start
 
-The Compose ports bind to your own machine. The API requires a Google session
-before serving workspace routes. Neon is used when its connection URL is set in
-`DATABASE_URL`; the bundled PostgreSQL service is optional (`--profile local-db`).
-The first boot creates the app schema in the selected database. It does not copy
-conversation data from an existing local database. Without a Gemini key, chat
-returns a clear configuration error rather than a simulated answer.
-The default chat model is `gemini-3.6-flash`, with `gemini-3.5-flash-lite` as a
-fallback when Google reports temporary capacity errors.
+1. Copy `docker/.env.docker.example` to `docker/.env`.
+2. Set `GEMINI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_AUTH_ALLOWED_EMAIL`, and `DATABASE_URL`. For local development, use a new empty database; do not point a demo instance at a database containing private data.
+3. Generate `GOOGLE_TOKEN_KEY` with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and `SESSION_SECRET` with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Keep `docker/.env` private and out of Git.
+4. In Google Cloud, add `http://localhost:8000/api/v1/integrations/google/callback` as an authorized redirect URI. The same callback handles Google sign-in and Google service connections.
+5. Start the app from the repository root:
 
-### Connect Google for briefings
+   ```bash
+   docker compose --env-file docker/.env -f docker/docker-compose.yml up --build
+   ```
 
-Create an OAuth web application in Google Cloud Console, enable Gmail API and
-Google Calendar API, and register
-`http://localhost:8000/api/v1/integrations/google/callback` as an authorized
-redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
-`GOOGLE_TOKEN_KEY` in `docker/.env`. Generate the encryption key with
-`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
-Then restart Compose, open **Connected Apps**, and connect Google. The app asks
-only for Gmail read-only and Calendar events read-only scopes. The key encrypts
-the saved refresh token; keep it stable and private. The chat can then summarize
-up to 10 unread messages and events in the next 24 hours when requested. These
-Google calls currently use account-scoped direct API adapters. NexusAI also supports account-owned remote MCP connectors from Settings; operator-managed MCP servers can still be configured in the API environment.
+6. Open [http://localhost:3000](http://localhost:3000). The API health endpoint is [http://localhost:8000/health](http://localhost:8000/health).
 
-> **Phase 1: Monorepo Foundation & Frontend Command Center**  
-> Built for developer-grade autonomous agent orchestration, Model Context Protocol (MCP) ecosystems, and human-in-the-loop governance.
+The Compose PostgreSQL service is optional but recommended for local use. Set `DATABASE_URL=postgresql://nexus:nexus_secret@postgres:5432/nexusai` in `docker/.env`, then start it with:
 
----
-
-## 1. Executive Summary & What Was Created
-
-NexusAI is an autonomous AI Chief of Staff and agentic operating system designed to orchestrate high-level delegation across Google Workspace (Gmail, Calendar), Telegram, Headless Chromium (Playwright), and persistent memory stores.
-
-In this foundational phase, we have established:
-1. **Production Monorepo Structure**: Full package isolation with `@nexusai/types`, `@nexusai/ui`, `@nexusai/config`, and `apps/web`.
-2. **Next.js 16 Web Command Center**: A dark-mode dashboard for agent activity and connected tools.
-3. **8 Feature-Complete Interfaces**:
-   - **Agent Console (Main Chat)**: Multi-agent message stream, safe progress summaries without hidden chain-of-thought, tool execution indicators, browser speech recognition with transcript review, spoken assistant replies, stop/cancel controls, and quick prompt presets.
-   - **Live Agent Activity Panel**: Real-time orchestration hierarchy, active task summaries, and step-by-step tool timeline.
-   - **Connected Apps**: Google, Telegram, and GitHub connections with live account-specific states. Add account-owned custom MCP endpoints from Settings → MCP connectors.
-   - **Memory Bank (pgvector)**: Filterable long-term memory across Semantic facts, Preferences & Rules, Episodic recaps, and Procedural SOPs with confidence metrics and search.
-   - **Tasks & Scheduled Cron**: Autonomous background routines with cron syntax, interval triggers, priority badges, enable/disable toggles, and creation modal.
-   - **Approval Center (Human-in-the-Loop)**: Staged external actions requiring human authorization (Send email, Reschedule calendar, Post message, Browser form submit) with parameter diff viewers and approve/reject feedback loops.
-   - **Agent Runs & Observability**: Token economics, cost estimates, P95 latency breakdowns (Planning vs Tool Execution vs Model Inference), error tracking, and full run inspection.
-   - **Settings & Guardrails**: Account profile, Gemini generation controls, guardrails, alerts, and encrypted account-owned MCP connectors.
-4. **Resilient Service Abstraction (`lib/api/client.ts`)**: Single-point switch between **Mock Mode** (with real-time simulated SSE stream, tool calls, and stateful memory updates) and real **FastAPI Backend**.
-5. **Architectural Blueprints & Hand-off Docs**: Mermaid flowcharts, REST & SSE contracts, MCP specifications, pgvector memory schemas, and a step-by-step backend roadmap for Codex.
-
----
-
-## 2. Monorepo Project Structure
-
-```text
-NexusAI/
-├── apps/
-│   ├── web/                        # Next.js 16 App Router frontend
-│   │   ├── src/
-│   │   │   ├── app/                # Next.js Pages (/, /activity, /apps, /memory, /tasks, /approvals, /observability, /settings)
-│   │   │   ├── components/         # Modular UI & Feature components
-│   │   │   │   ├── chat/           # Chat container, Message bubble, Tool badge, Reasoning summary
-│   │   │   │   ├── activity/       # Live activity traces & tree
-│   │   │   │   ├── apps/           # MCP cards, connection modal, scopes
-│   │   │   │   ├── memory/         # Vector memory table, search, add modal
-│   │   │   │   ├── tasks/          # Cron task cards, scheduler modal
-│   │   │   │   ├── approvals/      # Human approval cards, diff viewers, decision modals
-│   │   │   │   ├── observability/  # KPI cards, runs table, latency breakdowns
-│   │   │   │   ├── settings/       # Guardrail controls & model selectors
-│   │   │   │   ├── layout/         # Sidebar, Header, Status bars
-│   │   │   │   └── shared/         # Button, Badge, Card, Modal, Toast, Skeleton
-│   │   │   ├── lib/
-│   │   │   │   ├── api/            # API client, Mock state, SSE simulator
-│   │   │   │   ├── hooks/          # useToasts, event listeners
-│   │   │   │   └── utils.ts        # Formatting & styling helpers
-│   │   │   └── types/              # Frontend types
-│   │   ├── tailwind.config.js      # Developer-grade dark aesthetic
-│   │   ├── tsconfig.json
-│   │   └── package.json
-│   └── api/                        # <-- CODEX IMPLEMENTS FASTAPI HERE
-├── packages/
-│   ├── types/                      # Shared TypeScript contracts & schemas
-│   │   ├── src/
-│   │   │   ├── agent.ts            # Agent & capability models
-│   │   │   ├── chat.ts             # Message, ToolCall, ToolResult
-│   │   │   ├── activity.ts         # ActivityStep, AgentRun, ExecutionEvent
-│   │   │   ├── memory.ts           # Memory categories & search
-│   │   │   ├── task.ts             # ScheduledTask & cron interfaces
-│   │   │   ├── approval.ts         # ApprovalRequest, diffs, & decisions
-│   │   │   ├── integration.ts      # ConnectedApp & MCP scopes
-│   │   │   ├── observability.ts    # Token metrics & latency breakdowns
-│   │   │   └── settings.ts         # Guardrails & provider config
-│   ├── ui/                         # Shared UI tokens
-│   └── config/                     # Shared tooling configs
-├── architecture/
-│   ├── README.md                   # High-level architecture & system boundaries
-│   └── diagrams/
-│       ├── system-overview.mermaid # Complete end-to-end topology
-│       ├── agent-orchestration.mermaid # LangGraph sequence & approval pause
-│       ├── mcp-mesh.mermaid        # MCP client-server gateway mesh
-│       ├── approval-workflow.mermaid # Human-in-the-loop decision state machine
-│       └── memory-flow.mermaid     # Dual-tier pgvector + Redis memory pipeline
-├── docs/
-│   ├── API_CONTRACTS.md            # Complete REST & SSE specifications for FastAPI
-│   ├── MCP_ARCHITECTURE.md         # MCP SDK guidelines, stdio servers, & tool definitions
-│   ├── AGENT_ARCHITECTURE.md       # LangGraph supervisor-worker & checkpointing specs
-│   ├── MEMORY_ARCHITECTURE.md      # PostgreSQL + pgvector schema & RRF hybrid search
-│   └── CODEX_BACKEND_HANDOFF.md    # Actionable backend implementation plan
-├── docker/
-│   ├── docker-compose.yml          # Postgres 16 (pgvector), Redis 7.2, Web, API
-│   ├── Dockerfile.web
-│   ├── Dockerfile.api
-│   └── .env.docker.example
-├── pnpm-workspace.yaml
-├── package.json
-└── README.md
+```bash
+docker compose --profile local-db --env-file docker/.env -f docker/docker-compose.yml up --build
 ```
 
----
+See [deployment readiness](docs/DEPLOYMENT_READINESS.md) before hosting the app for other people.
 
-## 3. How to Run the Frontend
+## Connect your personal accounts
 
-### Prerequisites
-- Node.js >= 20.9 (Node.js 22 recommended)
-- npm or pnpm
+First, sign into NexusAI with the Google account that should own your workspace. Open **Connections** and choose **Connect** for each service. Each OAuth flow must start from the same NexusAI account that will own that connection. Provider credentials are configured once by the person hosting NexusAI; users then authorize their own accounts in the app.
 
-### Quick Start
-1. Install dependencies (from root):
-   ```bash
-   npm install
-   ```
-2. Run development server:
-   ```bash
-   npm run dev
-   ```
-3. Open [http://localhost:3000](http://localhost:3000) in your browser.
+### Google, Gmail, Calendar, Classroom, and Contacts
 
-The frontend operates in **Mock Mode** by default (`NEXT_PUBLIC_USE_MOCK_API=true`), meaning you can interactively:
-- Submit prompts and watch the SSE simulator emit live tool executions and incremental streaming tokens.
-- Review and Approve/Reject pending actions in the **Approval Center**.
-- Add and delete long-term memories in the **Memory Bank**.
-- Toggle and register new scheduled cron tasks in **Tasks**.
-- Connect and disconnect MCP integrations in **Connected Apps**.
-- Inspect execution latencies and token economics in **Observability**.
+The host creates a Google OAuth web client, enables Gmail API, Google Calendar API, Google Classroom API, and People API as needed, then configures `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and the callback URL for their deployment. For local setup, see [Google and channel setup](docs/CHANNEL_SETUP.md#google-sign-in-rollout). For a hosted setup, register the exact URLs described in [deployment readiness](docs/DEPLOYMENT_READINESS.md).
 
----
+Each user signs into NexusAI with their own Google account, then opens **Connections** and connects Gmail, Calendar, Classroom, or Contacts separately. Google may restrict sign-in to test users while the OAuth consent screen is in Testing. The user must be added as a test user until the host completes the required Google verification and publishes the consent screen.
 
-## 4. Key Architectural Decisions
+Gmail summaries use read-only access. To create a draft, a user must grant Gmail compose access and approve the exact draft in **Approvals**. NexusAI does not send Gmail messages.
 
-1. **Strict Chain-of-Thought Encapsulation**:
-   Raw LLM scratchpads and internal CoT prompts are NEVER streamed to the UI. Instead, the supervisor emits structured `ExecutionSummaryStep` events (`Understanding request`, `Memory retrieval`, `Gmail search`, `Calendar lookup`, `Final response`) displayed as collapsible, safe progress nodes.
-2. **MCP (Model Context Protocol) as the Standard Tool Interface**:
-   Instead of ad-hoc python scripts, tools are decoupled into standardized MCP servers. The backend functions as an MCP Client; adding a new capability requires zero changes to the core prompt.
-3. **Deterministic Human-in-the-Loop (HITL) Checkpoints**:
-   Actions modifying external state (sending emails, modifying calendar events, browser submissions) pause execution via LangGraph checkpoints. The graph state is persisted in PostgreSQL/Redis while awaiting human decision via the web UI.
-4. **pgvector + Redis Hybrid Memory**:
-   Separated into 4 clear tiers: User Preferences (injected into all prompts), Semantic Knowledge (HNSW vector similarity), Procedural SOPs, and Episodic Execution Logs.
-5. **Decoupled API Contract Layer**:
-   All frontend services are abstracted in `lib/api/client.ts`. When Codex builds FastAPI, switching `NEXT_PUBLIC_USE_MOCK_API=false` immediately binds the web UI to the real endpoints.
+### GitHub
 
----
+The host creates a GitHub App and configures its client ID, secret, and callback. Grant **Metadata**, **Issues**, **Pull requests**, and **Actions** read-only access; do not grant write permissions. Install the app on the repositories it may read. Then each user opens **Connections → GitHub → Connect** and authorizes their own GitHub account. Follow [GitHub setup](docs/GITHUB_SETUP.md) for the complete configuration.
 
-## 5. Codex Implementation Guide & Roadmap
+### LinkedIn
 
-Codex should implement the backend in `apps/api` following `docs/CODEX_BACKEND_HANDOFF.md`:
+The host creates a LinkedIn developer app, enables **Sign In with LinkedIn using OpenID Connect** and **Share on LinkedIn**, and sets `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI`. Register the exact callback URL for the deployment. Each user then opens **Connections → LinkedIn → Connect** and signs into their own member account. A post is published only after the user approves its exact text. NexusAI does not read the feed or messages, and does not publish to organizations.
 
-```text
-Target Backend Stack:
-├── Framework: FastAPI (Async)
-├── Multi-Agent: LangGraph + LangChain Core
-├── Foundation Model: Google Gemini (configurable; default gemini-3.6-flash)
-├── MCP SDK: mcp (Official Python SDK)
-├── Database: PostgreSQL 16 + pgvector extension
-├── Cache / Locks: Redis 7.2
-└── Background Scheduler: APScheduler / Celery
-```
+### Instagram
 
-### Exact Next Steps for Codex:
-1. **Initialize `apps/api`**:
-   - Create `pyproject.toml` with `fastapi`, `uvicorn`, `sqlalchemy[asyncio]`, `asyncpg`, `pgvector`, `mcp`, `langgraph`, and `langchain-google-genai`.
-2. **Database Models & Migrations**:
-   - Implement tables for `memories`, `tasks`, `approvals`, `runs`, and `conversations` matching `docs/API_CONTRACTS.md` and `docs/MEMORY_ARCHITECTURE.md`.
-3. **Streaming Endpoint (`POST /api/v1/agent/stream`)**:
-   - Implement SSE generator using `StreamingResponse` emitting `run:init`, `step:start`, `tool:start`, `tool:end`, `stream:chunk`, `approval:required`, and `run:complete`.
-4. **LangGraph Supervisor Graph**:
-   - Construct supervisor router node and worker agents (`comms`, `calendar`, `browser`, `memory`).
-   - Wire `PostgresSaver` checkpointer for graph pause/resume.
-5. **MCP Client Gateway**:
-   - Spawn stdio servers for `mcp-gmail`, `mcp-calendar`, `mcp-telegram`, and `mcp-playwright`.
-   - Intercept calls to approval-gated tools and trigger `ApprovalRequest`.
-6. **Deploy with Docker**:
-   - Launch entire stack using `docker-compose -f docker/docker-compose.yml up`.
+The host configures a Meta developer app for **Instagram API with Instagram Login**, then sets `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, and `INSTAGRAM_REDIRECT_URI`. Enable `instagram_business_basic` and `instagram_business_manage_messages`, and register the exact callback URL for the deployment. Each user opens **Connections → Instagram → Connect** and authorizes their own professional Business or Creator account. During development, the user may need to be added as an app tester; broader access may require Meta review. Replies require an explicit request and approval. Personal accounts and group messaging are unsupported.
+
+### Telegram
+
+The host creates a bot with BotFather and configures `TELEGRAM_BOT_TOKEN`. Each user signs into their NexusAI account, opens **Connections → Telegram**, creates a link code, and sends the displayed `/link CODE` command to the bot in a private chat. The code expires after 10 minutes and works once. Do not share it.
+
+### Signed-in websites
+
+Open **Connections → Browser → Manage websites**, enter the public HTTPS sign-in page, and sign in in the short-lived browser window. Save the site when finished. The encrypted session belongs to the current NexusAI account and can be removed from Connections. In chat, page inspection may use the saved session; form fills and clicks require approval. Some sites block automation or require CAPTCHAs.
+
+### Custom MCP server
+
+Open **Settings → MCP connectors**, enter a connector name and public HTTPS MCP endpoint, optionally add a bearer token, and test discovery. Tokens are encrypted at rest. Every remote tool requires approval, regardless of the server's read-only annotation. See [MCP connector details](docs/CHANNEL_SETUP.md#mcp-connector-configuration).
+
+## Deployment and demo limits
+
+Use a separate database and least-privilege runtime role for each deployment. Never commit `.env` files, provider secrets, database passwords, or user tokens. Configure OAuth callback URLs to match the public application exactly. Follow the [deployment readiness checklist](docs/DEPLOYMENT_READINESS.md) before enabling real users.
+
+The [free-tier demo guide](docs/FREE_TIER_DEMO.md) is for synthetic data. Free hosting may sleep or expire, and free AI services may have limited quotas or different data handling terms. Do not connect personal accounts or enter sensitive information in a public free demo.
+
+## Project guides
+
+- [Deployment readiness](docs/DEPLOYMENT_READINESS.md)
+- [Channel setup and limits](docs/CHANNEL_SETUP.md)
+- [Google and GitHub account setup](docs/GITHUB_SETUP.md)
+- [MCP architecture](docs/MCP_ARCHITECTURE.md)
+- [Security and row-level security](docs/SECURITY_RLS.md)
+- [Free-tier synthetic-data demo](docs/FREE_TIER_DEMO.md)
+- [Architecture diagrams](architecture/README.md)
